@@ -1,0 +1,24 @@
+[package]
+name = "kittengrid-agent"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+log = "0.4"
+clap = { version = "4.0.10", features = ["derive", "env"] }
+env_logger = "0.9"
+rocket = { version = "0.5.0-rc.2", features = ["json"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0.83"
+git2 = "0.15.0"
+compose_rust = { path = "/home/jose/projects/kittengrid/compose_rust" }
+
+[dependencies.uuid]
+version = "1.1.2"
+features = [
+    "v4",                # Lets you generate random UUIDs
+    "fast-rng",          # Use a faster (but still sufficiently random) RNG
+    "macro-diagnostics", # Enable better diagnostics for compile-time UUIDs
+]
