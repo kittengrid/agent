@@ -13,7 +13,7 @@ rocket = { version = "0.5.0-rc.2", features = ["json"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.83"
 git2 = "0.15.0"
-compose_rust = { path = "/home/jose/projects/kittengrid/compose_rust" }
+compose_rust = { git = "https://github.com/kittengrid/compose_rust.git" }
 
 [dependencies.uuid]
 version = "1.1.2"
