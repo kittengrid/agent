@@ -11,7 +11,10 @@ use std::sync::{Arc, Mutex};
 use clap::Parser;
 mod compose;
 mod config;
+mod docker_compose;
 mod endpoints;
+mod state_dir;
+pub use state_dir::StateDir;
 
 extern crate log;
 
@@ -41,6 +44,7 @@ extern crate log;
 
 // GET /compose/%{id}
 // Returns the component
+
 pub type AgentState = Arc<Mutex<HashMap<Uuid, compose::Context>>>;
 
 #[launch]

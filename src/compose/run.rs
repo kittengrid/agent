@@ -1,5 +1,5 @@
 use rocket::serde::{Deserialize, Serialize};
-use std::{thread, time};
+use rocket::tokio::time::{sleep, Duration};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum RunState {
@@ -28,14 +28,11 @@ impl Run {
         }
     }
 
-    pub fn fetch_repo(&mut self) {
+    pub async fn fetch_repo(&mut self, ctx: crate::compose::Context) {
         let repo = self.repo.clone();
-        let fetching_thread = thread::spawn(move || {
-            println!("I am fetching the repo, please wait");
-            let ten_millis = time::Duration::from_secs(1);
-            thread::sleep(ten_millis);
-            println!("I have fetched the repo");
-        });
+        let ten_seconds = Duration::from_secs(10);
+        println!("HOLA");
+        sleep(ten_seconds).await;
     }
 }
 
@@ -51,14 +48,14 @@ mod tests {
         assert!(matches!(run.state, RunState::Idle));
     }
 
-    fn fetch_repo() {
+    async fn fetch_repo() {
         let repo = String::from("https://github.com/kittengrid/kittengrid-agent.git");
-        let mut run = Run::new(repo, Vec::from(["docker-compose.yaml".to_string()]));
-        run.fetch_repo();
+        let run = Run::new(repo, Vec::from(["docker-compose.yaml".to_string()]));
+
         assert!(matches!(run.state, RunState::FetchingRepo { .. }));
 
-        let ten_millis = time::Duration::from_secs(2);
-        thread::sleep(ten_millis);
+        let ten_millis = Duration::from_secs(2);
+        sleep(ten_millis);
         assert!(matches!(run.state, RunState::RepoReady));
     }
 }

@@ -1,9 +1,10 @@
-use crate::compose;
+use crate::{compose, compose::Context};
 use rocket::http::{Header, Status};
 use rocket::serde::{json::Json, Deserialize, Serialize};
+use rocket::tokio;
 use rocket::Responder;
 use rocket::State;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 #[derive(Responder)]
@@ -50,28 +51,29 @@ pub struct NewComposeRequest<'r> {
 
 #[post("/compose", data = "<request_data>")]
 // TODO: meaningful errors (What the heck check https://github.com/SergioBenitez/Rocket/issues/749)
-pub fn new(
+pub async fn new(
     agent_state: &State<crate::AgentState>,
     request_path: PathCatcher,
     request_data: Json<NewComposeRequest<'_>>,
 ) -> AcceptResponder {
-    let mutex = Arc::clone(agent_state);
+    let hash_mutex = Arc::clone(agent_state);
     let id = Uuid::new_v4();
 
-    {
-        let mut hash = mutex.lock().unwrap();
-        hash.insert(
-            id,
-            compose::Context {
-                status: compose::Status::Fetching,
-                run: compose::Run::new(
-                    request_data.repo.to_string(),
-                    Vec::from([request_data.path.to_string()]),
-                ),
-                id,
-            },
-        );
-    }
+    let ctx = compose::Context::new(
+        compose::Status::Fetching,
+        compose::Run::new(
+            request_data.repo.to_string(),
+            Vec::from([request_data.path.to_string()]),
+        ),
+        id,
+    );
+    let other_ctx = ctx.clone();
+    let mut hash = hash_mutex.lock().unwrap();
+    hash.insert(id, ctx);
+
+    tokio::spawn(async move {
+        other_ctx.fetch_repo().await;
+    });
 
     AcceptResponder {
         inner: rocket::response::status::Accepted(Some(format!("{{\"id\":\"{}\"}}", id))),
@@ -91,7 +93,7 @@ pub fn status(
     agent_state: &State<crate::AgentState>,
     id: String,
 ) -> Result<Json<compose::Status>, rocket::response::status::Custom<&'static str>> {
-    let mutex = Arc::clone(agent_state);
+    let hash_mutex = Arc::clone(agent_state);
     let id = match Uuid::parse_str(&id) {
         Ok(id) => id,
         Err(_err) => {
@@ -103,9 +105,9 @@ pub fn status(
     };
 
     {
-        let hash = mutex.lock().unwrap();
+        let hash = hash_mutex.lock().unwrap();
         match hash.get(&id) {
-            Some(value) => Ok(Json(value.status)),
+            Some(ctx) => Ok(Json(ctx.status())),
             None => Err(rocket::response::status::Custom(
                 Status::NotFound,
                 "Not found",
@@ -121,7 +123,7 @@ pub fn show(
     agent_state: &State<crate::AgentState>,
     id: String,
 ) -> Result<Json<compose::Status>, rocket::response::status::Custom<&'static str>> {
-    let mutex = Arc::clone(agent_state);
+    let hash_mutex = Arc::clone(agent_state);
     let id = match Uuid::parse_str(&id) {
         Ok(id) => id,
         Err(_err) => {
@@ -133,9 +135,9 @@ pub fn show(
     };
 
     {
-        let hash = mutex.lock().unwrap();
+        let hash = hash_mutex.lock().unwrap();
         match hash.get(&id) {
-            Some(value) => Ok(Json(value.status)),
+            Some(ctx) => Ok(Json(ctx.status())),
             None => Err(rocket::response::status::Custom(
                 Status::NotFound,
                 "Not found",
@@ -154,8 +156,8 @@ mod test {
 
     fn simple_new_compose_request_data() -> String {
         serde_json::to_string(&NewComposeRequest {
-            repo: "pepe",
-            path: "juan",
+            repo: "https://github.com/docker/awesome-compose.git",
+            path: "plex/compose.yaml",
         })
         .unwrap()
     }
@@ -172,6 +174,23 @@ mod test {
         let location = response.headers().get_one("Location").unwrap();
         assert_eq!(response.content_type(), Some(ContentType::JSON));
         assert!(location.to_string().starts_with("/compose/status/"));
+        let response = client.get(location).dispatch();
+        assert_eq!(response.status(), Status::Ok);
+        let mut status = response.into_json::<ComposeStatus>().unwrap();
+        loop {
+            match status {
+                ComposeStatus::Fetching => {
+                    status = client
+                        .get(location)
+                        .dispatch()
+                        .into_json::<ComposeStatus>()
+                        .unwrap();
+                    println!("Fetching")
+                }
+                _ => break,
+            }
+        }
+        assert!(matches!(status, ComposeStatus::Fetched { .. }));
     }
 
     #[test]
