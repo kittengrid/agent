@@ -14,7 +14,6 @@ mod config;
 mod docker_compose;
 mod endpoints;
 mod state_dir;
-pub use state_dir::StateDir;
 
 extern crate log;
 

@@ -4,12 +4,18 @@ use tempfile::tempdir;
 
 use thiserror::Error;
 
-#[derive(Error, Debug, PartialEq)]
-pub enum StateDirError {
+#[derive(Error, Debug)]
+pub enum StateDirInitError {
     #[error("Cannot write state directory")]
     DirectoryNotWritable,
-    #[error("IO Error")]
-    IOError,
+    #[error("IO Error ({})", .0)]
+    IOError(std::io::Error),
+}
+
+#[derive(Error, Debug, PartialEq)]
+pub enum StateDirError {
+    #[error("Directory not initialized")]
+    DirectoryNotInitialized,
 }
 
 /// Data structure to manage the state directory
@@ -53,9 +59,9 @@ impl StateDir {
     /// state_dir.init();
     /// ```
     ///
-    pub fn init(&mut self) -> Result<(), StateDirError> {
+    pub fn init(&mut self) -> Result<(), StateDirInitError> {
         return match build_directory_structure(self.path.as_str()) {
-            Err(StateDirError::DirectoryNotWritable) => {
+            Err(StateDirInitError::DirectoryNotWritable) => {
                 warn!(
                     "Cannot write to destination dir ({}), using a temporary directory instead",
                     self.path
@@ -65,7 +71,7 @@ impl StateDir {
                 self.path = temp_dir.path().to_str().unwrap().to_string();
                 build_directory_structure(self.path.as_str())
             }
-            Err(StateDirError::IOError) => Err(StateDirError::IOError),
+            Err(error) => Err(error),
             Ok(()) => {
                 self.initialized = true;
                 Ok(())
@@ -74,15 +80,16 @@ impl StateDir {
     }
 
     /// Returns the bin directory of the state dir
-    pub fn bin_path(&mut self) -> std::path::PathBuf {
+    pub fn bin_path(&self) -> Result<std::path::PathBuf, StateDirError> {
         if !self.initialized {
-            self.init();
+            return Err(StateDirError::DirectoryNotInitialized);
         }
-        std::path::Path::new(&self.path).join("bin")
+
+        Ok(std::path::Path::new(&self.path).join("bin"))
     }
 }
 
-fn build_directory_structure(path: &str) -> Result<(), StateDirError> {
+fn build_directory_structure(path: &str) -> Result<(), StateDirInitError> {
     let paths = vec!["bin", "repos"];
     let mut temp_builder = fs::DirBuilder::new();
     let builder = temp_builder.recursive(true);
@@ -90,8 +97,8 @@ fn build_directory_structure(path: &str) -> Result<(), StateDirError> {
     for new_path in paths {
         if let Err(err) = builder.create(std::path::Path::new(path).join(new_path)) {
             return match err.kind() {
-                io::ErrorKind::PermissionDenied => Err(StateDirError::DirectoryNotWritable),
-                _ => Err(StateDirError::IOError),
+                io::ErrorKind::PermissionDenied => Err(StateDirInitError::DirectoryNotWritable),
+                _ => Err(StateDirInitError::IOError(err)),
             };
         };
     }
@@ -113,7 +120,7 @@ mod test {
     fn init() {
         // Normal creation
         let mut state_dir = StateDir::new(tempdir().unwrap().path().to_str().unwrap());
-        assert_eq!(state_dir.init(), Ok(()));
+        assert!(state_dir.init().is_ok());
 
         // When we pass a readonly directory it creates a new temporary one
         let readonly_dir = tempdir().unwrap();
@@ -127,8 +134,8 @@ mod test {
 
         // When we call several times (directories already exist)
         let mut state_dir = StateDir::new(tempdir().unwrap().path().to_str().unwrap());
-        assert_eq!(state_dir.init(), Ok(()));
-        assert_eq!(state_dir.init(), Ok(()));
+        assert!(state_dir.init().is_ok());
+        assert!(state_dir.init().is_ok());
     }
 
     #[test]
@@ -137,7 +144,7 @@ mod test {
         let mut state_dir = StateDir::new(dir.path().to_str().unwrap());
         state_dir.init();
         assert_eq!(
-            state_dir.bin_path().to_str().unwrap(),
+            state_dir.bin_path().unwrap().to_str().unwrap(),
             dir.path().join("bin").to_str().unwrap()
         );
     }
