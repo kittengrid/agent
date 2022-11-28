@@ -10,8 +10,8 @@ use std::str;
 use thiserror::Error;
 
 /// Data structure to manage docker-compose execution
-pub struct DockerCompose {
-    binary_path: PathBuf,
+pub struct DockerCompose<'a> {
+    data_dir: &'a DataDir,
     cwd: Option<String>,
     compose_file: Option<String>,
     env: HashMap<String, String>,
@@ -63,7 +63,7 @@ pub struct DockerComposePsPublisher {
     pub url: String,
 }
 
-impl DockerCompose {
+impl<'a> DockerCompose<'a> {
     /// Returns an DockerCompose instance.
     ///
     /// This method needs the state_dir so it can install (if not done already), the
@@ -81,7 +81,7 @@ impl DockerCompose {
     /// let docker_compose = DockerCompose::new(data_dir);
     /// ```
     ///
-    pub fn new(data_dir: &DataDir) -> Result<Self, DockerComposeInitError> {
+    pub fn new(data_dir: &'a DataDir) -> Result<Self, DockerComposeInitError> {
         let binary_path = match data_dir.bin_path() {
             Err(DataDirError::DirectoryNotInitialized) => {
                 return Err(DockerComposeInitError::DirectoryNotInitialized)
@@ -91,21 +91,28 @@ impl DockerCompose {
         let binary_data = include_bytes!("docker-compose-linux-binary");
 
         // @TODO: Do not write it again if the file exists
-        match std::fs::write(binary_path.clone(), binary_data) {
+        match std::fs::write(&binary_path, binary_data) {
             Err(why) => Err(DockerComposeInitError::BinaryNotWritable(why)),
             Ok(_) => {
-                let mut perms = fs::metadata(binary_path.clone()).unwrap().permissions();
+                let mut perms = fs::metadata(&binary_path).unwrap().permissions();
                 perms.set_mode(0o700); // Read/write for owner and read for others.
 
-                fs::set_permissions(binary_path.clone(), perms).unwrap();
+                fs::set_permissions(&binary_path, perms).unwrap();
                 Ok(DockerCompose {
-                    binary_path,
+                    data_dir,
                     cwd: None,
                     compose_file: None,
                     env: HashMap::new(),
                 })
             }
         }
+    }
+
+    fn binary_path(&self) -> PathBuf {
+        self.data_dir
+            .bin_path()
+            .expect("Directory should be initialized if instance is created")
+            .join("docker-compose")
     }
 
     ///
@@ -252,7 +259,7 @@ impl DockerCompose {
             None => return Err(DockerComposeRunError::NoDockerComposeFile),
         };
 
-        let mut command = Command::new(self.binary_path.clone());
+        let mut command = Command::new(self.binary_path());
         for (key, value) in &self.env {
             command.env(&*key, &*value);
         }
@@ -295,26 +302,27 @@ mod test {
 
     #[test]
     fn new() {
-        let directory = tempdir().unwrap();
-        let mut data_dir = DataDir::new(directory.path().to_path_buf());
+        let temp_dir = tempdir().unwrap();
+        let data_dir = DataDir::new(temp_dir.path().to_path_buf());
 
-        let mut docker_compose = DockerCompose::new(&data_dir);
+        let docker_compose = DockerCompose::new(&data_dir);
         assert!(matches!(
             docker_compose.err().unwrap(),
             DockerComposeInitError::DirectoryNotInitialized
         ));
 
+        let mut data_dir = DataDir::new(temp_dir.path().to_path_buf());
         data_dir.init().unwrap();
-        docker_compose = DockerCompose::new(&data_dir);
+
+        let docker_compose = DockerCompose::new(&data_dir);
         assert!(docker_compose.is_ok());
-        assert!(
-            std::path::Path::new(&directory.path().join("bin").join("docker-compose")).exists()
-        );
+        assert!(std::path::Path::new(&data_dir.path().join("bin").join("docker-compose")).exists());
     }
 
     #[test]
     fn invoke_with_incorrect_directory_and_a_valid_docker_compose_file_path() {
-        let (_tempdir, mut compose) = docker_compose("simple-compose.yaml");
+        let (_tempdir, data_dir) = data_dir();
+        let mut compose = docker_compose(&data_dir, "simple-compose.yaml");
         compose.cwd(String::from(" I DO NOT EXIST"));
         assert!(matches!(
             compose.create().err().unwrap(),
@@ -324,7 +332,8 @@ mod test {
 
     #[test]
     fn invoke_with_valid_directory_and_incorrect_docker_compose_file_path() {
-        let (_tempdir, compose) = docker_compose("I do not exist");
+        let (_tempdir, data_dir) = data_dir();
+        let compose = docker_compose(&data_dir, "I do not exist");
         assert!(matches!(
             compose.create().err().unwrap(),
             DockerComposeRunError::DockerComposeFileNotFound(_)
@@ -334,19 +343,21 @@ mod test {
     #[test]
     fn invoke_with_incorrect_directory_and_a_valid_docker_compose_file_path_with_invalid_contents()
     {
-        let (_tempdir, compose) = docker_compose("simple-compose-gone-wrong.yaml");
+        let (_tempdir, data_dir) = data_dir();
+        let compose = docker_compose(&data_dir, "simple-compose-gone-wrong.yaml");
         assert!(matches!(
             compose.create().err().unwrap(),
             DockerComposeRunError::ErrorExitStatus(_)
         ));
     }
-
+    use std::{thread, time};
     #[test]
     fn ps() {
-        let (_tempdir, compose) = docker_compose("simple-compose.yaml");
-
+        let (_tempdir, data_dir) = data_dir();
+        let compose = docker_compose(&data_dir, "simple-compose.yaml");
         assert!(compose.create().is_ok());
         assert!(compose.start().is_ok());
+
         let output = compose.ps().unwrap();
         let ps = output.first().unwrap();
         assert_eq!(ps.command, "docker-entrypoint.sh redis-server");
@@ -358,7 +369,9 @@ mod test {
 
     #[test]
     fn rm_deletes_containers_when_force_stop_is_set_to_true() {
-        let (_tempdir, compose) = docker_compose("simple-compose.yaml");
+        let (_tempdir, data_dir) = data_dir();
+        let compose = docker_compose(&data_dir, "simple-compose.yaml");
+
         compose.create().unwrap();
         compose.start().unwrap();
         let output = compose.ps().unwrap();
@@ -374,26 +387,36 @@ mod test {
     }
 
     // Delete Docker stuff
-    impl Drop for DockerCompose {
+    impl<'a> Drop for DockerCompose<'a> {
         fn drop(&mut self) {
             self.clean();
         }
     }
 
-    // Helpers
-    fn docker_compose(fixture: &str) -> (TempDir, DockerCompose) {
-        let tempdir = tempdir().unwrap();
-        let mut data_dir = DataDir::new(tempdir.path().to_path_buf());
+    fn data_dir() -> (TempDir, DataDir) {
+        let temp_dir = tempdir().unwrap();
+        let mut data_dir = DataDir::new(temp_dir.path().to_path_buf());
         data_dir.init().unwrap();
-        let mut compose = DockerCompose::new(&data_dir).unwrap();
-        let project_name =
-            String::from(tempdir.path().file_name().and_then(|s| s.to_str()).unwrap());
+
+        (temp_dir, data_dir)
+    }
+
+    // Helpers
+    fn docker_compose<'a>(data_dir: &'a DataDir, fixture: &str) -> DockerCompose<'a> {
+        let mut compose = DockerCompose::new(data_dir).unwrap();
+        let project_name = String::from(
+            data_dir
+                .path()
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap(),
+        );
         compose
             .cwd(test_fixture(""))
             .project_name(project_name)
             .compose_file(test_fixture(fixture));
 
-        (tempdir, compose)
+        compose
     }
 
     fn test_fixture(path: &str) -> String {
