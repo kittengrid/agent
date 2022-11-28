@@ -1,11 +1,12 @@
 use log::warn;
+use std::path::PathBuf;
 use std::{fs, io};
 use tempfile::tempdir;
 
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub enum StateDirInitError {
+pub enum DataDirInitError {
     #[error("Cannot write state directory")]
     DirectoryNotWritable,
     #[error("IO Error ({})", .0)]
@@ -13,19 +14,20 @@ pub enum StateDirInitError {
 }
 
 #[derive(Error, Debug, PartialEq)]
-pub enum StateDirError {
+pub enum DataDirError {
     #[error("Directory not initialized")]
     DirectoryNotInitialized,
 }
 
 /// Data structure to manage the state directory
-pub struct StateDir {
-    pub path: String,
+#[derive(Clone, Debug)]
+pub struct DataDir {
+    path: PathBuf,
     initialized: bool,
 }
 
-impl StateDir {
-    /// Returns an StateDir struct with the path set.
+impl DataDir {
+    /// Returns an DataDir struct with the path set.
     ///
     /// # Arguments
     ///
@@ -35,13 +37,13 @@ impl StateDir {
     /// # Examples
     ///
     /// ```
-    /// use state_dir::StateDir;
-    /// let state_dir = StateDir::new("/var/lib/kittengrid-agent");
+    /// use data_dir::DataDir;
+    /// let data_dir = DataDir::new("/var/lib/kittengrid-agent");
     /// ```
     ///
-    pub fn new(path: &str) -> Self {
+    pub fn new(path: PathBuf) -> Self {
         Self {
-            path: path.to_string(),
+            path,
             initialized: false,
         }
     }
@@ -54,22 +56,22 @@ impl StateDir {
     /// # Examples
     ///
     /// ```
-    /// use state_dir::StateDir;
-    /// let state_dir = StateDir::new("/var/lib/kittengrid-agent");
-    /// state_dir.init();
+    /// use data_dir::DataDir;
+    /// let data_dir = DataDir::new("/var/lib/kittengrid-agent");
+    /// data_dir.init();
     /// ```
     ///
-    pub fn init(&mut self) -> Result<(), StateDirInitError> {
-        return match build_directory_structure(self.path.as_str()) {
-            Err(StateDirInitError::DirectoryNotWritable) => {
+    pub fn init(&mut self) -> Result<(), DataDirInitError> {
+        return match build_directory_structure(&self.path) {
+            Err(DataDirInitError::DirectoryNotWritable) => {
                 warn!(
                     "Cannot write to destination dir ({}), using a temporary directory instead",
-                    self.path
+                    self.path.to_str().unwrap()
                 );
                 let temp_dir = tempdir().unwrap();
 
-                self.path = temp_dir.path().to_str().unwrap().to_string();
-                build_directory_structure(self.path.as_str())
+                self.path = PathBuf::from(temp_dir.path());
+                build_directory_structure(&self.path)
             }
             Err(error) => Err(error),
             Ok(()) => {
@@ -79,26 +81,40 @@ impl StateDir {
         };
     }
 
+    /// Returns the path of the state dir.
+    pub fn path(&self) -> PathBuf {
+        self.path.clone()
+    }
+
     /// Returns the bin directory of the state dir
-    pub fn bin_path(&self) -> Result<std::path::PathBuf, StateDirError> {
+    pub fn bin_path(&self) -> Result<std::path::PathBuf, DataDirError> {
         if !self.initialized {
-            return Err(StateDirError::DirectoryNotInitialized);
+            return Err(DataDirError::DirectoryNotInitialized);
         }
 
-        Ok(std::path::Path::new(&self.path).join("bin"))
+        Ok(self.path.join("bin"))
+    }
+
+    /// Returns the repos directory of the state dir
+    pub fn repos_path(&self) -> Result<std::path::PathBuf, DataDirError> {
+        if !self.initialized {
+            return Err(DataDirError::DirectoryNotInitialized);
+        }
+
+        Ok(self.path.join("repos"))
     }
 }
 
-fn build_directory_structure(path: &str) -> Result<(), StateDirInitError> {
+fn build_directory_structure(path: &PathBuf) -> Result<(), DataDirInitError> {
     let paths = vec!["bin", "repos"];
     let mut temp_builder = fs::DirBuilder::new();
     let builder = temp_builder.recursive(true);
 
     for new_path in paths {
-        if let Err(err) = builder.create(std::path::Path::new(path).join(new_path)) {
+        if let Err(err) = builder.create(path.join(new_path)) {
             return match err.kind() {
-                io::ErrorKind::PermissionDenied => Err(StateDirInitError::DirectoryNotWritable),
-                _ => Err(StateDirInitError::IOError(err)),
+                io::ErrorKind::PermissionDenied => Err(DataDirInitError::DirectoryNotWritable),
+                _ => Err(DataDirInitError::IOError(err)),
             };
         };
     }
@@ -112,15 +128,15 @@ mod test {
 
     #[test]
     fn new() {
-        let state_dir = StateDir::new("/tmp");
-        assert_eq!(state_dir.path, "/tmp");
+        let data_dir = DataDir::new(PathBuf::from("/tmp"));
+        assert_eq!(data_dir.path(), PathBuf::from("/tmp"));
     }
 
     #[test]
     fn init() {
         // Normal creation
-        let mut state_dir = StateDir::new(tempdir().unwrap().path().to_str().unwrap());
-        assert!(state_dir.init().is_ok());
+        let mut data_dir = DataDir::new(tempdir().unwrap().path().to_path_buf());
+        assert!(data_dir.init().is_ok());
 
         // When we pass a readonly directory it creates a new temporary one
         let readonly_dir = tempdir().unwrap();
@@ -128,23 +144,22 @@ mod test {
         perms.set_readonly(true);
 
         fs::set_permissions(readonly_dir.path(), perms).unwrap();
-        let mut state_dir = StateDir::new(readonly_dir.path().to_str().unwrap());
-        state_dir.init();
-        assert_ne!(state_dir.path, readonly_dir.path().to_str().unwrap());
+        let mut data_dir = DataDir::new(readonly_dir.path().to_path_buf());
+        data_dir.init().unwrap();
+        assert_ne!(data_dir.path, readonly_dir.path().to_path_buf());
 
         // When we call several times (directories already exist)
-        let mut state_dir = StateDir::new(tempdir().unwrap().path().to_str().unwrap());
-        assert!(state_dir.init().is_ok());
-        assert!(state_dir.init().is_ok());
+        let mut data_dir = DataDir::new(tempdir().unwrap().path().to_path_buf());
+        assert!(data_dir.init().is_ok());
     }
 
     #[test]
     fn bin() {
         let dir = tempdir().unwrap();
-        let mut state_dir = StateDir::new(dir.path().to_str().unwrap());
-        state_dir.init();
+        let mut data_dir = DataDir::new(dir.path().to_path_buf());
+        data_dir.init().unwrap();
         assert_eq!(
-            state_dir.bin_path().unwrap().to_str().unwrap(),
+            data_dir.bin_path().unwrap().to_str().unwrap(),
             dir.path().join("bin").to_str().unwrap()
         );
     }

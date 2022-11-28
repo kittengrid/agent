@@ -11,9 +11,10 @@ use std::sync::{Arc, Mutex};
 use clap::Parser;
 mod compose;
 mod config;
+mod data_dir;
 mod docker_compose;
 mod endpoints;
-mod state_dir;
+mod git_manager;
 
 extern crate log;
 

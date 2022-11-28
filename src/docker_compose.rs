@@ -1,32 +1,66 @@
-use crate::state_dir::{StateDir, StateDirError};
+use crate::data_dir::{DataDir, DataDirError};
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
+use std::io::Error;
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::str;
 use thiserror::Error;
 
 /// Data structure to manage docker-compose execution
 pub struct DockerCompose {
-    pub binary_path: PathBuf,
-    pub cwd: Option<String>,
-    pub compose_file: Option<String>,
-    pub env: HashMap<String, String>,
+    binary_path: PathBuf,
+    cwd: Option<String>,
+    compose_file: Option<String>,
+    env: HashMap<String, String>,
 }
 
 #[derive(Error, Debug)]
 pub enum DockerComposeInitError {
     #[error("Cannot write docker-compose binary into state dir ({}).", .0)]
-    BinaryNotWritable(std::io::Error),
+    BinaryNotWritable(Error),
     #[error("Directory not initialized")]
     DirectoryNotInitialized,
 }
 
 #[derive(Error, Debug)]
 pub enum DockerComposeRunError {
-    #[error("Cannot call docker compose without specifying a compose-file")]
+    #[error("Cannot call docker compose without specifying a compose-file.")]
     NoDockerComposeFile,
+    #[error("Could not execute the docker compose command ({}).", .0)]
+    ExecutionError(Error),
+    #[error("Exit status was not zero. Was ({})", .0.status.code().unwrap())]
+    ErrorExitStatus(Output),
+    #[error("Docker compose file not found or not readable ({}).", .0)]
+    DockerComposeFileNotFound(String),
+}
+
+// Struct that stores the result of a docker-compose ps call
+#[derive(Deserialize, Debug, Default)]
+#[serde(default, rename_all = "PascalCase")]
+pub struct DockerComposePsResult {
+    pub command: String,
+    pub exit_code: u16,
+    pub health: String,
+    #[serde(rename = "ID")]
+    pub id: String,
+    pub name: String,
+    pub project: String,
+    pub publishers: Option<Vec<DockerComposePsPublisher>>,
+    pub service: String,
+    pub state: String,
+}
+
+// Needed by previous struct definition (publishers)
+#[derive(Deserialize, Debug, Default)]
+#[serde(default)]
+pub struct DockerComposePsPublisher {
+    pub protocol: String,
+    pub published_port: u32,
+    pub target_port: u32,
+    pub url: String,
 }
 
 impl DockerCompose {
@@ -37,19 +71,19 @@ impl DockerCompose {
     ///
     /// # Arguments
     ///
-    /// * `state_dir` - A StateDir to be used for installing the bundled docker-compose binary.
+    /// * `state_dir` - A DataDir to be used for installing the bundled docker-compose binary.
     ///
     /// # Examples
     ///
     /// ```
-    /// use state_dir::StateDir;
-    /// let state_dir = StateDir::new("/var/lib/kittengrid-agent");
-    /// let docker_compose = DockerCompose::new(state_dir);
+    /// use data_dir::DataDir;
+    /// let data_dir = DataDir::new("/var/lib/kittengrid-agent");
+    /// let docker_compose = DockerCompose::new(data_dir);
     /// ```
     ///
-    pub fn new(state_dir: &StateDir) -> Result<Self, DockerComposeInitError> {
-        let binary_path = match state_dir.bin_path() {
-            Err(StateDirError::DirectoryNotInitialized) => {
+    pub fn new(data_dir: &DataDir) -> Result<Self, DockerComposeInitError> {
+        let binary_path = match data_dir.bin_path() {
+            Err(DataDirError::DirectoryNotInitialized) => {
                 return Err(DockerComposeInitError::DirectoryNotInitialized)
             }
             Ok(bin_path) => bin_path.join("docker-compose"),
@@ -87,6 +121,18 @@ impl DockerCompose {
     }
 
     ///
+    /// Sets up the project name, this will be used as a prefix for naming containers by docker-compose.
+    ///
+    /// # Arguments
+    ///
+    /// * `project_name` - A String with the name of the project.
+    ///
+    pub fn project_name(&mut self, project_name: String) -> &mut Self {
+        self.env(String::from("COMPOSE_PROJECT_NAME"), project_name);
+        self
+    }
+
+    ///
     /// Sets the compose-file path for the docker-compose process.
     ///
     /// # Arguments
@@ -120,7 +166,8 @@ impl DockerCompose {
         self.invoke("create", vec![])
     }
 
-    /// Executes docker-compose up.
+    ///
+    /// Executes docker-compose start.
     ///
     /// This method executes a synchronous call to docker-compose passing the
     /// subcommand `start`, waits for it to finish and returns the result or an execution error.
@@ -128,12 +175,68 @@ impl DockerCompose {
         self.invoke("start", vec![])
     }
 
+    ///
+    /// Executes docker-compose stop.
+    ///
+    /// This method executes a synchronous call to docker-compose passing the
+    /// subcommand `stop`, waits for it to finish and returns the result or an execution error.
+    pub fn stop(&self) -> Result<Output, DockerComposeRunError> {
+        self.invoke("stop", vec![])
+    }
+
+    ///
+    /// Executes docker-compose rm.
+    ///
+    /// This method executes a synchronous call to docker-compose passing the
+    /// subcommand `rm`, waits for it to finish and returns the result or an execution error.
+    pub fn rm(&self, stop: bool) -> Result<Output, DockerComposeRunError> {
+        let mut arguments = vec![String::from("-f")];
+        if stop {
+            arguments.push(String::from("-s"));
+        }
+        self.invoke("rm", arguments)
+    }
+
     /// Executes docker-compose status.
     ///
     /// This method executes a synchronous call to docker-compose passing the
     /// subcommand `ps`, waits for it to finish and returns the result or an execution error.
-    pub fn ps(&self) -> Result<Output, DockerComposeRunError> {
-        self.invoke("ps", vec![String::from("--format"), String::from("json")])
+    pub fn ps(&self) -> Result<Vec<DockerComposePsResult>, DockerComposeRunError> {
+        let output = self.invoke("ps", vec![String::from("--format"), String::from("json")])?;
+        let data = str::from_utf8(&output.stdout).unwrap();
+        let ps: Vec<DockerComposePsResult> = serde_json::from_str(data).unwrap();
+        Ok(ps)
+    }
+
+    /// Executes docker-compose down.
+    ///
+    /// This method executes a synchronous call to docker-compose passing the
+    /// subcommand `ps`, waits for it to finish and returns the result or an execution error.
+    ///
+    /// # Arguments
+    ///
+    /// * `remove_orphans` - Remove containers for services not defined in the Compose file.
+    /// * `rmi`            - Remove images used by services. "local" remove only images that don't have a custom tag ("local"|"all")
+    /// * `volumes`        - Remove named volumes declared in the volumes section of the Compose file and anonymous volumes attached to containers.
+    ///
+    pub fn down(
+        &self,
+        remove_orphans: bool,
+        rmi: Option<String>,
+        volumes: bool,
+    ) -> Result<Output, DockerComposeRunError> {
+        let mut arguments = vec![];
+        if remove_orphans {
+            arguments.push(String::from("--remove-orphans"));
+        }
+        if let Some(rmi) = rmi {
+            arguments.push(String::from("--rmi"));
+            arguments.push(rmi);
+        }
+        if volumes {
+            arguments.push(String::from("-v"));
+        }
+        self.invoke("down", arguments)
     }
 
     /// Invokes a docker-compose command.
@@ -153,69 +256,149 @@ impl DockerCompose {
         for (key, value) in &self.env {
             command.env(&*key, &*value);
         }
+        if !Path::new(&*compose_file_path).exists() {
+            return Err(DockerComposeRunError::DockerComposeFileNotFound(
+                compose_file_path.to_string(),
+            ));
+        }
+
         command.env("COMPOSE_FILE", &*compose_file_path);
         if let Some(cwd) = &self.cwd {
             command.current_dir(&*cwd);
         }
+
         command.arg(subcommand).args(args.as_slice());
-        println!("{:?}", command);
-        Ok(command.output().expect("Failed to execute docker-compose"))
+        match command.output() {
+            Ok(output) => {
+                if output.status.success() {
+                    Ok(output)
+                } else {
+                    Err(DockerComposeRunError::ErrorExitStatus(output))
+                }
+            }
+            Err(err) => Err(DockerComposeRunError::ExecutionError(err)),
+        }
+    }
+
+    // For internal use, cleans up the network associated with this
+    // docker compose.
+    fn clean(&mut self) {
+        self.down(true, Some(String::from("all")), true);
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::state_dir::StateDir;
-    use tempfile::tempdir;
+    use crate::data_dir::DataDir;
+    use tempfile::{tempdir, TempDir};
 
     #[test]
     fn new() {
         let directory = tempdir().unwrap();
-        let mut state_dir = StateDir::new(directory.path().to_str().unwrap());
+        let mut data_dir = DataDir::new(directory.path().to_path_buf());
 
-        let mut docker_compose = DockerCompose::new(&state_dir);
+        let mut docker_compose = DockerCompose::new(&data_dir);
         assert!(matches!(
             docker_compose.err().unwrap(),
             DockerComposeInitError::DirectoryNotInitialized
         ));
 
-        state_dir.init().unwrap();
-        docker_compose = DockerCompose::new(&state_dir);
+        data_dir.init().unwrap();
+        docker_compose = DockerCompose::new(&data_dir);
         assert!(docker_compose.is_ok());
         assert!(
             std::path::Path::new(&directory.path().join("bin").join("docker-compose")).exists()
         );
     }
 
-    fn docker_compose(directory: &str) -> DockerCompose {
-        let mut state_dir = StateDir::new(directory);
+    #[test]
+    fn invoke_with_incorrect_directory_and_a_valid_docker_compose_file_path() {
+        let (_tempdir, mut compose) = docker_compose("simple-compose.yaml");
+        compose.cwd(String::from(" I DO NOT EXIST"));
+        assert!(matches!(
+            compose.create().err().unwrap(),
+            DockerComposeRunError::ExecutionError(_)
+        ));
+    }
 
-        state_dir.init().unwrap();
-        DockerCompose::new(&state_dir).unwrap()
+    #[test]
+    fn invoke_with_valid_directory_and_incorrect_docker_compose_file_path() {
+        let (_tempdir, compose) = docker_compose("I do not exist");
+        assert!(matches!(
+            compose.create().err().unwrap(),
+            DockerComposeRunError::DockerComposeFileNotFound(_)
+        ));
+    }
+
+    #[test]
+    fn invoke_with_incorrect_directory_and_a_valid_docker_compose_file_path_with_invalid_contents()
+    {
+        let (_tempdir, compose) = docker_compose("simple-compose-gone-wrong.yaml");
+        assert!(matches!(
+            compose.create().err().unwrap(),
+            DockerComposeRunError::ErrorExitStatus(_)
+        ));
+    }
+
+    #[test]
+    fn ps() {
+        let (_tempdir, compose) = docker_compose("simple-compose.yaml");
+
+        assert!(compose.create().is_ok());
+        assert!(compose.start().is_ok());
+        let output = compose.ps().unwrap();
+        let ps = output.first().unwrap();
+        assert_eq!(ps.command, "docker-entrypoint.sh redis-server");
+        assert_eq!(ps.exit_code, 0);
+        assert_eq!(ps.health, "");
+        assert!(compose.stop().is_ok());
+        assert!(compose.rm(true).is_ok());
+    }
+
+    #[test]
+    fn rm_deletes_containers_when_force_stop_is_set_to_true() {
+        let (_tempdir, compose) = docker_compose("simple-compose.yaml");
+        compose.create().unwrap();
+        compose.start().unwrap();
+        let output = compose.ps().unwrap();
+        let ps = output.first().unwrap();
+        assert_eq!(ps.command, "docker-entrypoint.sh redis-server");
+        compose.rm(false).unwrap();
+        let output = compose.ps().unwrap();
+        let ps = output.first().unwrap();
+        assert_eq!(ps.command, "docker-entrypoint.sh redis-server");
+        compose.rm(true).unwrap();
+        let output = compose.ps().unwrap();
+        assert!(output.first().is_none());
+    }
+
+    // Delete Docker stuff
+    impl Drop for DockerCompose {
+        fn drop(&mut self) {
+            self.clean();
+        }
+    }
+
+    // Helpers
+    fn docker_compose(fixture: &str) -> (TempDir, DockerCompose) {
+        let tempdir = tempdir().unwrap();
+        let mut data_dir = DataDir::new(tempdir.path().to_path_buf());
+        data_dir.init().unwrap();
+        let mut compose = DockerCompose::new(&data_dir).unwrap();
+        let project_name =
+            String::from(tempdir.path().file_name().and_then(|s| s.to_str()).unwrap());
+        compose
+            .cwd(test_fixture(""))
+            .project_name(project_name)
+            .compose_file(test_fixture(fixture));
+
+        (tempdir, compose)
     }
 
     fn test_fixture(path: &str) -> String {
         let path_buf =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("resources/test/{}", path));
         path_buf.into_os_string().into_string().unwrap()
-    }
-
-    #[test]
-    fn create() {
-        let tempdir = tempdir().unwrap();
-        let mut state_dir = StateDir::new(tempdir.path().to_str().unwrap());
-        state_dir.init().unwrap();
-
-        let mut compose = DockerCompose::new(&state_dir).unwrap();
-        compose
-            .cwd(test_fixture(""))
-            .compose_file(test_fixture("simple-compose.yaml"));
-
-        let mut output = compose.create();
-        println!("{}", str::from_utf8(&output.unwrap().stdout).unwrap());
-        println!("-=--");
-        output = compose.ps();
-        println!("{}", str::from_utf8(&output.unwrap().stdout).unwrap());
     }
 }

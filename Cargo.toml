@@ -16,6 +16,8 @@ git2 = "0.15.0"
 compose_rust = { git = "ssh://git@github.com/kittengrid/compose_rust.git" }
 thiserror = "1.0"
 tempfile = "3.3.0"
+url = "2.3.1"
+sha2 = "0.10.6"
 
 [dependencies.uuid]
 version = "1.1.2"

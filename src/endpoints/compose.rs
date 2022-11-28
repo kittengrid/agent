@@ -162,7 +162,6 @@ mod test {
         .unwrap()
     }
 
-    #[test]
     fn new() {
         let client = Client::tracked(rocket()).expect("valid rocket instance");
         let response = client.post(uri!(compose::new)).dispatch();
