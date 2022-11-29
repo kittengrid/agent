@@ -1,7 +1,10 @@
 use crate::data_dir::{DataDir, DataDirError};
 use git2::build::RepoBuilder;
+use git2::{Cred, Error, RemoteCallbacks};
 use sha2::{Digest, Sha256, Sha512};
+use std::env;
 use std::fs;
+use std::path::Path;
 use std::path::PathBuf;
 use thiserror::Error;
 use url::{ParseError, Url};
@@ -14,14 +17,6 @@ pub enum GitManagerInitError {
     DirectoryNotWritable,
     #[error("IO Error {}", .0)]
     IOError(std::io::Error),
-}
-
-#[derive(Error, Debug)]
-pub enum GitFetchError {
-    #[error("Unable to extract directory name")]
-    TargetDirectoryError,
-    #[error("Repository url parse error ({})", .0)]
-    UrlParseError(url::ParseError),
 }
 
 impl From<std::io::Error> for GitManagerInitError {
@@ -61,7 +56,7 @@ impl<'a> GitManager<'a> {
             Ok(repos_path) => repos_path,
         };
 
-        let md = fs::metadata(repos_path.clone())?;
+        let md = fs::metadata(repos_path)?;
         let permissions = md.permissions();
         let readonly = permissions.readonly();
         if readonly {
@@ -71,89 +66,72 @@ impl<'a> GitManager<'a> {
         Ok(Self { data_dir })
     }
 
-    fn dir_for_repo(&self, repo: &str) -> Result<Option<PathBuf>, ParseError> {
-        let url = Url::parse(repo)?;
-        match url.path_segments() {
-            None => Ok(None),
-            Some(segments) => {
-                let last_entry = match segments.clone().last() {
-                    Some("") => {
-                        let rev = segments.clone().rev();
-                        let elements: Vec<&str> = rev.skip_while(|v| v.is_empty()).collect();
-                        match elements.first() {
-                            Some(&"") => None,
-                            Some(str) => Some(*str),
-                            _ => None,
-                        }
-                    }
-                    Some(entry) => Some(entry),
-                    _ => None,
-                };
-                match last_entry {
-                    None => Ok(None),
-                    Some(entry) => {
-                        let dir_name = hash_string(&url) + "-" + &strip_dot_git(entry);
-                        println!("{}", dir_name);
-                        Ok(Some(self.data_dir.repos_path().unwrap().join(dir_name)))
-                    }
-                }
-            }
-        }
-    }
-
     ///
     /// Fetches the repository and saves it into a directory inside data_dir as
     /// a bare repo, if the repository already exists, it downloads objects and refs (git fetch).
     ///
     /// # Arguments:
     ///
-    /// * `repo` - The Url of the git repository
+    /// * `repo` - A struct that implements RemoteRepo containing the repo to clone.
     ///
-    pub fn fetch(&self, repo: &str) -> Result<(), GitFetchError> {
-        let target_dir = match self.dir_for_repo(repo) {
-            Ok(directory) => match directory {
-                None => return Err(GitFetchError::TargetDirectoryError),
-                Some(dir) => dir,
-            },
-            Err(err) => return Err(GitFetchError::UrlParseError(err)),
-        };
-        println!("{:?}", target_dir);
+    pub fn fetch(&self, repo: &impl RemoteRepo) -> Result<(), git2::Error> {
+        // Prepare fetch options.
+        let mut fo = git2::FetchOptions::new();
+        fo.remote_callbacks(auth_callbacks());
 
-        // Clone the project.
         let mut builder = git2::build::RepoBuilder::new();
-
-        //     builder
-        //         .bare(true)
-        //         .clone(repo, self.repos_dir.join(dir_for_repo(repo)))
-
-        // };
+        builder.fetch_options(fo);
+        builder
+            .bare(true)
+            .clone(&repo.url(), &repo.target_dir(self.data_dir))?;
         Ok(())
     }
 }
 
-fn strip_dot_git(entry: &str) -> String {
-    if let Some(stripped) = entry.strip_suffix(".git") {
-        return stripped.to_string();
-    }
-    entry.to_string()
+// @TODO: Deal with auth
+fn auth_callbacks() -> RemoteCallbacks<'static> {
+    let mut callbacks = RemoteCallbacks::new();
+    callbacks.credentials(|_url, username_from_url, _allowed_types| {
+        Cred::ssh_key(
+            username_from_url.unwrap(),
+            None,
+            Path::new(&format!("{}/.ssh/id_rsa", env::var("HOME").unwrap())),
+            None,
+        )
+    });
+    callbacks
 }
 
-fn hash_string(input: &Url) -> String {
-    let mut hasher = Sha256::new();
+pub trait RemoteRepo {
+    fn target_dir(&self, data_dir: &DataDir) -> PathBuf;
+    fn url(&self) -> String;
+}
 
-    // write input message
+struct GitHubRepo {
+    user: String,
+    repo: String,
+}
 
-    hasher.update(input.host_str().unwrap().to_owned() + input.path());
+impl RemoteRepo for GitHubRepo {
+    fn target_dir(&self, data_dir: &DataDir) -> PathBuf {
+        data_dir
+            .repos_path()
+            .unwrap()
+            .join("github")
+            .join(self.user.clone())
+            .join(self.repo.clone())
+    }
 
-    // read hash digest and consume hasher
-    let result = hasher.finalize();
-    format!("{:x}", result)[0..7].to_string()
+    fn url(&self) -> String {
+        format!("git@github.com:{}/{}.git", self.user, self.repo)
+    }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
     use crate::data_dir::DataDir;
+    use std::{thread, time};
     use tempfile::{tempdir, TempDir};
 
     #[test]
@@ -164,57 +142,17 @@ mod test {
     }
 
     #[test]
-    fn fetch_with_invalid_url() {
+    fn fetch_with_valid_url() {
         let (_tempdir, data_dir) = temp_data_dir();
         let manager = manager_instance(&data_dir);
-        let manager = manager.unwrap();
-        assert!(matches!(
-            manager.fetch("this is not a valid url").err().unwrap(),
-            GitFetchError::UrlParseError(_)
-        ))
-    }
+        let repo = GitHubRepo {
+            user: String::from("magec"),
+            repo: String::from("utf8mb4rails"),
+        };
 
-    #[test]
-    fn fetch_with_valid_invbalid_target_dir() {
-        let (_tempdir, data_dir) = temp_data_dir();
-        let manager = manager_instance(&data_dir);
         let manager = manager.unwrap();
-        assert!(matches!(
-            manager.fetch("git:///").err().unwrap(),
-            GitFetchError::TargetDirectoryError
-        ))
-    }
-
-    #[test]
-    fn dir_for_repo() {
-        let (_tempdir, data_dir) = temp_data_dir();
-        let manager = manager_instance(&data_dir);
-        let manager = manager.unwrap();
-        assert!(manager
-            .dir_for_repo("git://this/is/correct////")
-            .unwrap()
-            .unwrap()
-            .ends_with("e3fb9f6-correct"));
-        assert!(manager
-            .dir_for_repo("git://this/is/correct")
-            .unwrap()
-            .unwrap()
-            .ends_with("e3fb9f6-correct"));
-        assert!(manager
-            .dir_for_repo("git://this/is/correct.git")
-            .unwrap()
-            .unwrap()
-            .ends_with("correct"));
-
-        assert_eq!(
-            manager
-                .dir_for_repo("git://this/is/correct.git")
-                .unwrap()
-                .unwrap()
-                .to_str()
-                .unwrap(),
-            "pepe"
-        );
+        let result = manager.fetch(&repo);
+        println!("{:?}", result);
     }
 
     // Helpers
@@ -222,10 +160,11 @@ mod test {
         let directory = tempdir().unwrap();
         let mut data_dir = DataDir::new(directory.path().to_path_buf());
         data_dir.init().unwrap();
+
         (directory, data_dir)
     }
 
-    fn manager_instance<'a>(data_dir: &'a DataDir) -> Result<GitManager<'a>, GitManagerInitError> {
+    fn manager_instance(data_dir: &DataDir) -> Result<GitManager, GitManagerInitError> {
         GitManager::new(&data_dir)
     }
 }
