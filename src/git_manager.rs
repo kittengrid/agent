@@ -25,6 +25,19 @@ impl From<std::io::Error> for GitManagerInitError {
     }
 }
 
+#[derive(Error, Debug)]
+pub enum GitManagerFetchError {
+    #[error("Could not delete target_dir to recreate repository ({})", .0)]
+    CouldNotDeleteRepoDir(std::io::Error),
+    #[error("Git Error {}", .0)]
+    GitError(git2::Error),
+}
+impl From<git2::Error> for GitManagerFetchError {
+    fn from(err: git2::Error) -> Self {
+        GitManagerFetchError::GitError(err)
+    }
+}
+
 /// Data structure to manage docker-compose execution
 #[derive(Clone, Debug)]
 pub struct GitManager<'a> {
@@ -74,17 +87,41 @@ impl<'a> GitManager<'a> {
     ///
     /// * `repo` - A struct that implements RemoteRepo containing the repo to clone.
     ///
-    pub fn fetch(&self, repo: &impl RemoteRepo) -> Result<(), git2::Error> {
+    pub fn fetch(&self, repo: &impl RemoteRepo) -> Result<(), GitManagerFetchError> {
         // Prepare fetch options.
         let mut fo = git2::FetchOptions::new();
         fo.remote_callbacks(auth_callbacks());
 
         let mut builder = git2::build::RepoBuilder::new();
         builder.fetch_options(fo);
-        builder
-            .bare(true)
-            .clone(&repo.url(), &repo.target_dir(self.data_dir))?;
-        Ok(())
+        let target_dir = repo.target_dir(self.data_dir);
+        let result = builder.bare(true).clone(&repo.url(), &target_dir);
+        match result {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                if err.code() == git2::ErrorCode::Exists && err.class() == git2::ErrorClass::Invalid
+                {
+                    warn!("Repo directory exists, trying to fetch.");
+                    // Let's try to fetch refspects
+                    match git2::Repository::open(&target_dir) {
+                        Err(_err) => {
+                            warn!("Repo directory exists but is not a valid repo, will delete it and try to clone again.");
+                            match fs::remove_dir_all(&target_dir) {
+                                Ok(()) => return self.fetch(repo),
+                                Err(err) => {
+                                    return Err(GitManagerFetchError::CouldNotDeleteRepoDir(err))
+                                }
+                            }
+                        }
+                        Ok(repo) => {
+                            repo.find_remote("origin")?.fetch_refspecs()?;
+                            return Ok(());
+                        }
+                    }
+                }
+                Err(GitManagerFetchError::GitError(err))
+            }
+        }
     }
 }
 
@@ -107,7 +144,7 @@ pub trait RemoteRepo {
     fn url(&self) -> String;
 }
 
-struct GitHubRepo {
+pub struct GitHubRepo {
     user: String,
     repo: String,
 }
@@ -131,7 +168,6 @@ impl RemoteRepo for GitHubRepo {
 mod test {
     use super::*;
     use crate::data_dir::DataDir;
-    use std::{thread, time};
     use tempfile::{tempdir, TempDir};
 
     #[test]
@@ -146,13 +182,72 @@ mod test {
         let (_tempdir, data_dir) = temp_data_dir();
         let manager = manager_instance(&data_dir);
         let repo = GitHubRepo {
-            user: String::from("magec"),
-            repo: String::from("utf8mb4rails"),
+            user: String::from("kittengrid"),
+            repo: String::from("deb-s3"),
         };
 
         let manager = manager.unwrap();
         let result = manager.fetch(&repo);
-        println!("{:?}", result);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn fetch_with_valid_url_twice() {
+        env_logger::Builder::new()
+            .filter_level(log::LevelFilter::Debug)
+            .init();
+
+        let (_tempdir, data_dir) = temp_data_dir();
+        let manager = manager_instance(&data_dir).unwrap();
+        let repo = GitHubRepo {
+            user: String::from("kittengrid"),
+            repo: String::from("deb-s3"),
+        };
+
+        let manager = manager;
+        manager.fetch(&repo).unwrap();
+        assert!(manager.fetch(&repo).is_ok());
+    }
+
+    #[test]
+    fn fetch_with_garbage_in_destination() {
+        env_logger::Builder::new()
+            .filter_level(log::LevelFilter::Debug)
+            .init();
+
+        let (_tempdir, data_dir) = temp_data_dir();
+        let target_dir = data_dir
+            .repos_path()
+            .unwrap()
+            .join("github")
+            .join("kittengrid")
+            .join("deb-s3");
+
+        fs::create_dir_all(&target_dir).unwrap();
+        std::fs::File::create(target_dir.join("garbage")).expect("create failed");
+        let manager = manager_instance(&data_dir).unwrap();
+        let repo = GitHubRepo {
+            user: String::from("kittengrid"),
+            repo: String::from("deb-s3"),
+        };
+
+        assert!(manager.fetch(&repo).is_ok());
+    }
+
+    #[test]
+    fn fetch_with_invalid_url() {
+        let (_tempdir, data_dir) = temp_data_dir();
+        let manager = manager_instance(&data_dir);
+        let repo = GitHubRepo {
+            user: String::from("kittengrid"),
+            repo: String::from("I_DON_THINK_WE_WILL_EVER_HAVE_THIS_REPO"),
+        };
+
+        let manager = manager.unwrap();
+        assert!(matches!(
+            manager.fetch(&repo).err().unwrap(),
+            GitManagerFetchError
+        ));
     }
 
     // Helpers
@@ -165,6 +260,6 @@ mod test {
     }
 
     fn manager_instance(data_dir: &DataDir) -> Result<GitManager, GitManagerInitError> {
-        GitManager::new(&data_dir)
+        GitManager::new(data_dir)
     }
 }
