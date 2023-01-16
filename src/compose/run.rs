@@ -1,5 +1,9 @@
+use crate::data_dir::DataDir;
+use crate::docker_compose::DockerCompose;
+use crate::git_manager::{GitHubRepo, GitManager};
 use rocket::serde::{Deserialize, Serialize};
 use rocket::tokio::time::{sleep, Duration};
+use uuid::uuid;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum RunState {
@@ -28,8 +32,18 @@ impl Run {
         }
     }
 
-    pub async fn fetch_repo(&mut self, ctx: crate::compose::Context) {
-        let repo = self.repo.clone();
+    pub async fn fetch_repo(&mut self) {
+        let mut data_dir = DataDir::new("/var/lib/kittengrid-agent".into());
+        data_dir.init().unwrap();
+        let _docker_compose = DockerCompose::new(&data_dir);
+
+        let git_manager = GitManager::new(&data_dir).unwrap();
+
+        let repo = GitHubRepo::new("kittengrid", "deb-s3");
+        git_manager.fetch_remote(&repo).unwrap();
+        git_manager
+            .clone_local_branch(&repo, "main", uuid!("f37915a0-7195-11ed-a1eb-0242ac120002"))
+            .unwrap();
         let ten_seconds = Duration::from_secs(10);
         println!("HOLA");
         sleep(ten_seconds).await;

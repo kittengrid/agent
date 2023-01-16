@@ -38,7 +38,7 @@ impl DataDir {
     ///
     /// ```
     /// use data_dir::DataDir;
-    /// let data_dir = DataDir::new("/var/lib/kittengrid-agent");
+    /// let data_dir = DataDir::new("/var/lib/kittengrid-agent".into());
     /// ```
     ///
     pub fn new(path: PathBuf) -> Self {
@@ -95,6 +95,15 @@ impl DataDir {
         Ok(self.path.join("bin"))
     }
 
+    /// Returns the work directory of the state dir
+    pub fn work_path(&self) -> Result<std::path::PathBuf, DataDirError> {
+        if !self.initialized {
+            return Err(DataDirError::DirectoryNotInitialized);
+        }
+
+        Ok(self.path.join("work"))
+    }
+
     /// Returns the repos directory of the state dir
     pub fn repos_path(&self) -> Result<std::path::PathBuf, DataDirError> {
         if !self.initialized {
@@ -106,7 +115,7 @@ impl DataDir {
 }
 
 fn build_directory_structure(path: &PathBuf) -> Result<(), DataDirInitError> {
-    let paths = vec!["bin", "repos"];
+    let paths = vec!["bin", "repos", "work"];
     let mut temp_builder = fs::DirBuilder::new();
     let builder = temp_builder.recursive(true);
 

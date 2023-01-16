@@ -15,6 +15,7 @@ mod data_dir;
 mod docker_compose;
 mod endpoints;
 mod git_manager;
+mod utils;
 
 extern crate log;
 
@@ -50,10 +51,7 @@ pub type AgentState = Arc<Mutex<HashMap<Uuid, compose::Context>>>;
 #[launch]
 fn rocket_launch() -> _ {
     let args = config::Config::parse();
-    env_logger::Builder::new()
-        .filter_level(args.log_level)
-        .init();
-    println!("{:?}", args);
+    utils::initialize_logger();
     rocket()
 }
 
@@ -66,3 +64,6 @@ fn rocket() -> rocket::Rocket<rocket::Build> {
         .mount("/", routes![endpoints::compose::show])
         .mount("/", routes![endpoints::sys::hello])
 }
+
+#[cfg(test)]
+mod test_utils;

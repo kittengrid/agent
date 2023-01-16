@@ -350,7 +350,7 @@ mod test {
             DockerComposeRunError::ErrorExitStatus(_)
         ));
     }
-    use std::{thread, time};
+
     #[test]
     fn ps() {
         let (_tempdir, data_dir) = data_dir();

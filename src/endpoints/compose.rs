@@ -1,10 +1,10 @@
-use crate::{compose, compose::Context};
+use crate::compose;
 use rocket::http::{Header, Status};
 use rocket::serde::{json::Json, Deserialize, Serialize};
 use rocket::tokio;
 use rocket::Responder;
 use rocket::State;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use uuid::Uuid;
 
 #[derive(Responder)]
