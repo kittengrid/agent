@@ -1,7 +1,8 @@
 use clap::Parser;
 use log::LevelFilter;
+use once_cell::sync::Lazy;
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[command(author, version, about, long_about = None)]
 pub struct Config {
     /// Log level (error, warn, info, debug and trace), defaults to info
@@ -15,4 +16,10 @@ pub struct Config {
         env("WORK_DIR")
     )]
     pub work_directory: String,
+}
+
+static CONFIG: Lazy<Config> = Lazy::new(Config::parse);
+
+pub fn get_config() -> Config {
+    (*CONFIG).clone()
 }

@@ -8,7 +8,6 @@ use uuid::Uuid;
 use std::sync::{Arc, Mutex};
 //Rocket
 
-use clap::Parser;
 mod compose;
 mod config;
 mod data_dir;
@@ -16,6 +15,9 @@ mod docker_compose;
 mod endpoints;
 mod git_manager;
 mod utils;
+
+use config::get_config;
+use data_dir::DataDir;
 
 extern crate log;
 
@@ -42,7 +44,6 @@ extern crate log;
 // GET /compose/status/%{id}
 // Returns Status of the component
 //
-
 // GET /compose/%{id}
 // Returns the component
 
@@ -50,8 +51,10 @@ pub type AgentState = Arc<Mutex<HashMap<Uuid, compose::Context>>>;
 
 #[launch]
 fn rocket_launch() -> _ {
-    let args = config::Config::parse();
     utils::initialize_logger();
+    let config = get_config();
+    let data_dir = DataDir::new(config.work_directory.into());
+
     rocket()
 }
 
