@@ -1,6 +1,8 @@
-use crate::data_dir::{DataDir, DataDirError};
+use crate::data_dir::{get_data_dir, DataDir, DataDirError};
 use git2::build::{CheckoutBuilder, CloneLocal, RepoBuilder};
 use git2::{Cred, Object, Oid, RemoteCallbacks};
+use once_cell::sync::Lazy;
+use rocket::serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::env;
 use std::fs;
@@ -230,6 +232,7 @@ pub trait RemoteRepo {
 }
 
 // Repo from GitHub
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitHubRepo {
     user: String,
     repo: String,
@@ -268,6 +271,12 @@ impl UrlRepo {
     }
 }
 
+#[derive(Deserialize, Serialize, Clone, Debug)]
+pub enum GitReference {
+    Commit(String),
+    Branch(String),
+}
+
 impl RemoteRepo for UrlRepo {
     fn target_dir(&self, data_dir: &DataDir) -> PathBuf {
         let mut sha256 = Sha256::new();
@@ -285,6 +294,15 @@ impl RemoteRepo for UrlRepo {
     fn url(&self) -> String {
         self.url.clone()
     }
+}
+
+static GIT_MANAGER: Lazy<GitManager> = Lazy::new(|| {
+    let data_dir = get_data_dir();
+    GitManager::new(&data_dir)
+});
+
+pub fn get_git_manager() -> GitManager<'static> {
+    *GIT_MANAGER
 }
 
 #[cfg(test)]

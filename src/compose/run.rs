@@ -1,6 +1,6 @@
 use crate::data_dir::DataDir;
 use crate::docker_compose::DockerCompose;
-use crate::git_manager::{GitHubRepo, GitManager};
+use crate::git_manager::{GitHubRepo, GitManager, GitReference};
 use rocket::serde::{Deserialize, Serialize};
 use rocket::tokio::time::{sleep, Duration};
 use uuid::uuid;
@@ -13,9 +13,10 @@ pub enum RunState {
     ErrorFetchingRepo,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Run {
-    pub repo: String,
+    pub repo: GitHubRepo,
+    pub reference: GitReference,
     pub paths: Vec<String>,
     pub state: RunState,
 }
@@ -24,11 +25,12 @@ pub struct Run {
 struct RepoReady {}
 
 impl Run {
-    pub fn new(repo: String, paths: Vec<String>) -> Self {
+    pub fn new(repo: GitHubRepo, paths: Vec<String>, reference: GitReference) -> Self {
         Run {
             state: RunState::Idle,
             repo,
             paths,
+            reference,
         }
     }
 
@@ -57,14 +59,22 @@ mod tests {
 
     #[test]
     fn first_state() {
-        let repo = String::from("https://github.com/kittengrid/kittengrid-agent.git");
-        let run = Run::new(repo, Vec::from(["docker-compose.yaml".to_string()]));
+        let repo = GitHubRepo::new("kittengrid", "kittengrid-agent");
+        let run = Run::new(
+            repo,
+            Vec::from(["docker-compose.yaml".to_string()]),
+            GitReference::Branch("main".to_string()),
+        );
         assert!(matches!(run.state, RunState::Idle));
     }
 
     async fn fetch_repo() {
-        let repo = String::from("https://github.com/kittengrid/kittengrid-agent.git");
-        let run = Run::new(repo, Vec::from(["docker-compose.yaml".to_string()]));
+        let repo = GitHubRepo::new("kittengrid", "kittengrid-agent");
+        let run = Run::new(
+            repo,
+            Vec::from(["docker-compose.yaml".to_string()]),
+            GitReference::Branch("main".to_string()),
+        );
 
         assert!(matches!(run.state, RunState::FetchingRepo { .. }));
 

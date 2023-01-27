@@ -1,4 +1,5 @@
 use crate::compose;
+use crate::git_manager::{GitHubRepo, GitReference};
 use rocket::http::{Header, Status};
 use rocket::serde::{json::Json, Deserialize, Serialize};
 use rocket::tokio;
@@ -45,8 +46,10 @@ impl<'r> FromRequest<'r> for PathCatcher {
 
 #[derive(Deserialize, Serialize)]
 pub struct NewComposeRequest<'r> {
-    repo: &'r str,
+    github_user: &'r str,
+    github_repo: &'r str,
     path: &'r str,
+    reference: GitReference,
 }
 
 #[post("/compose", data = "<request_data>")]
@@ -56,23 +59,27 @@ pub async fn new(
     request_path: PathCatcher,
     request_data: Json<NewComposeRequest<'_>>,
 ) -> AcceptResponder {
-    let hash_mutex = Arc::clone(agent_state);
+
     let id = Uuid::new_v4();
+    let repo = GitHubRepo::new(request_data.github_user, request_data.github_repo);
 
     let ctx = compose::Context::new(
         compose::Status::Fetching,
         compose::Run::new(
-            request_data.repo.to_string(),
+            repo,
             Vec::from([request_data.path.to_string()]),
+            request_data.reference.clone(),
         ),
         id,
     );
-    let other_ctx = ctx.clone();
-    let mut hash = hash_mutex.lock().unwrap();
-    hash.insert(id, ctx);
+
+    {
+        let mut hash = agent_state.clone().write().unwrap();
+        hash.insert(id, ctx.clone());
+    }
 
     tokio::spawn(async move {
-        other_ctx.fetch_repo().await;
+        ctx.fetch_repo().await;
     });
 
     AcceptResponder {
@@ -93,7 +100,6 @@ pub fn status(
     agent_state: &State<crate::AgentState>,
     id: String,
 ) -> Result<Json<compose::Status>, rocket::response::status::Custom<&'static str>> {
-    let hash_mutex = Arc::clone(agent_state);
     let id = match Uuid::parse_str(&id) {
         Ok(id) => id,
         Err(_err) => {
@@ -105,7 +111,7 @@ pub fn status(
     };
 
     {
-        let hash = hash_mutex.lock().unwrap();
+        let hash = agent_state.clone().read().unwrap();
         match hash.get(&id) {
             Some(ctx) => Ok(Json(ctx.status())),
             None => Err(rocket::response::status::Custom(
@@ -123,7 +129,6 @@ pub fn show(
     agent_state: &State<crate::AgentState>,
     id: String,
 ) -> Result<Json<compose::Status>, rocket::response::status::Custom<&'static str>> {
-    let hash_mutex = Arc::clone(agent_state);
     let id = match Uuid::parse_str(&id) {
         Ok(id) => id,
         Err(_err) => {
@@ -135,7 +140,7 @@ pub fn show(
     };
 
     {
-        let hash = hash_mutex.lock().unwrap();
+        let hash = agent_state.clone().read().unwrap();
         match hash.get(&id) {
             Some(ctx) => Ok(Json(ctx.status())),
             None => Err(rocket::response::status::Custom(
@@ -156,8 +161,10 @@ mod test {
 
     fn simple_new_compose_request_data() -> String {
         serde_json::to_string(&NewComposeRequest {
-            repo: "https://github.com/docker/awesome-compose.git",
+            github_user: "docker",
+            github_repo: "awesome-compose",
             path: "plex/compose.yaml",
+	    commit:
         })
         .unwrap()
     }

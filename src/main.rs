@@ -2,10 +2,11 @@
 #[macro_use]
 extern crate rocket;
 
+use clap::Parser;
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 //Rocket
 
 mod compose;
@@ -16,7 +17,7 @@ mod endpoints;
 mod git_manager;
 mod utils;
 
-use config::get_config;
+use config::Config;
 use data_dir::DataDir;
 
 extern crate log;
@@ -47,19 +48,17 @@ extern crate log;
 // GET /compose/%{id}
 // Returns the component
 
-pub type AgentState = Arc<Mutex<HashMap<Uuid, compose::Context>>>;
+type AgentState = Arc<RwLock<HashMap<Uuid, compose::Context>>>;
 
 #[launch]
 fn rocket_launch() -> _ {
-    utils::initialize_logger();
-    let config = get_config();
-    let data_dir = DataDir::new(config.work_directory.into());
+    utils::initialize_logger(Config::parse());
 
     rocket()
 }
 
 fn rocket() -> rocket::Rocket<rocket::Build> {
-    let state = AgentState::new(Mutex::new(HashMap::<Uuid, compose::Context>::new()));
+    let state: AgentState = Arc::new(RwLock::new(HashMap::<Uuid, compose::Context>::new()));
     rocket::build()
         .manage(state)
         .mount("/", routes![endpoints::compose::new])

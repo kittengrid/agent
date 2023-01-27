@@ -1,8 +1,9 @@
+use crate::config::get_config;
 use log::warn;
+use once_cell::sync::Lazy;
 use std::path::PathBuf;
 use std::{fs, io};
 use tempfile::tempdir;
-
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -128,6 +129,17 @@ fn build_directory_structure(path: &PathBuf) -> Result<(), DataDirInitError> {
         };
     }
     Ok(())
+}
+
+static DATA_DIR: Lazy<DataDir> = Lazy::new(|| {
+    let config = get_config();
+    let data_dir = DataDir::new(config.work_directory);
+    data_dir.init();
+    data_dir
+});
+
+pub fn get_data_dir() -> DataDir {
+    (*DATA_DIR).clone()
 }
 
 #[cfg(test)]

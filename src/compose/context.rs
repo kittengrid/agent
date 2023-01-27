@@ -1,4 +1,5 @@
 use crate::compose;
+use crate::git_manager::{get_git_manager, GitHubRepo};
 use git2::{Cred, RemoteCallbacks};
 use rocket::serde::{Deserialize, Serialize};
 use std::env;
@@ -53,35 +54,13 @@ impl Context {
     }
 
     pub async fn fetch_repo(&self) {
-        let repo: String;
+        let repo: GitHubRepo;
         {
             let ctx = self.read().unwrap();
             repo = ctx.run.repo.clone();
         }
-
-        // Prepare callbacks.
-        let mut callbacks = RemoteCallbacks::new();
-        callbacks.credentials(|_url, username_from_url, _allowed_types| {
-            Cred::ssh_key(
-                username_from_url.unwrap(),
-                None,
-                Path::new(&format!("{}/.ssh/id_rsa", env::var("HOME").unwrap())),
-                None,
-            )
-        });
-
-        // Prepare fetch options.
-        let mut fo = git2::FetchOptions::new();
-        fo.remote_callbacks(callbacks);
-
-        // Prepare builder.
-        let mut builder = git2::build::RepoBuilder::new();
-        builder.fetch_options(fo);
-
-        // Clone the project.
-        builder
-            .clone(repo.as_str(), Path::new("/tmp/testing-123"))
-            .unwrap();
-        self.set_status(Status::Fetched);
+        let git_manager = get_git_manager();
+        git_manager.fetch_remote(&repo);
+        git_manager.clone_local_branch(repo, branch, uuid)
     }
 }
