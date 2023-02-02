@@ -1,6 +1,7 @@
+use crate::data_dir::{DataDir, DataDirInitError};
 use clap::Parser;
 use log::LevelFilter;
-use once_cell::sync::Lazy;
+use once_cell::sync::{Lazy, OnceCell};
 
 #[derive(Parser, Debug, Clone)]
 #[command(author, version, about, long_about = None)]
@@ -20,6 +21,17 @@ pub struct Config {
 
 static CONFIG: Lazy<Config> = Lazy::new(Config::parse);
 
-pub fn get_config() -> Config {
-    (*CONFIG).clone()
+pub fn get_config() -> &'static Config {
+    &CONFIG
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn parse() {
+        let config = Config::parse();
+        println!("{:?}", config);
+    }
 }

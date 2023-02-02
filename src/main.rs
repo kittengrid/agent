@@ -2,7 +2,6 @@
 #[macro_use]
 extern crate rocket;
 
-use clap::Parser;
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -52,7 +51,7 @@ type AgentState = Arc<RwLock<HashMap<Uuid, compose::Context>>>;
 
 #[launch]
 fn rocket_launch() -> _ {
-    utils::initialize_logger(Config::parse());
+    utils::initialize_logger();
 
     rocket()
 }

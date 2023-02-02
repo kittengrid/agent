@@ -298,11 +298,11 @@ impl RemoteRepo for UrlRepo {
 
 static GIT_MANAGER: Lazy<GitManager> = Lazy::new(|| {
     let data_dir = get_data_dir();
-    GitManager::new(&data_dir)
+    GitManager::new(data_dir).unwrap()
 });
 
-pub fn get_git_manager() -> GitManager<'static> {
-    *GIT_MANAGER
+pub fn get_git_manager() -> &'static GitManager<'static> {
+    &GIT_MANAGER
 }
 
 #[cfg(test)]
