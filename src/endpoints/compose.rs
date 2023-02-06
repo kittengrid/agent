@@ -1,11 +1,13 @@
 use crate::compose;
-use crate::git_manager::{GitHubRepo, GitReference};
+use crate::git_manager::{get_git_manager, GitHubRepo, GitReference};
 use rocket::http::{Header, Status};
 use rocket::serde::{json::Json, Deserialize, Serialize};
-use rocket::tokio;
+use std::sync::Arc;
+use tokio;
+
 use rocket::Responder;
 use rocket::State;
-use std::sync::Arc;
+
 use uuid::Uuid;
 
 #[derive(Responder)]
@@ -61,20 +63,37 @@ pub async fn new(
 ) -> AcceptResponder {
     let id = Uuid::new_v4();
     let repo = GitHubRepo::new(request_data.github_user, request_data.github_repo);
+    let reference = request_data.reference.clone();
 
-    let mut ctx = compose::Context::new(
+    let ctx = Arc::new(compose::Context::new(
         compose::Status::FetchingRepo,
-        repo,
-        request_data.reference.clone(),
+        repo.clone(),
+        reference.clone(),
         vec![],
-    );
+    ));
+    let cloned_ctx = ctx.clone();
+
+    let handle = tokio::task::spawn(async move {
+        warn!("DOING SOMETHING");
+        let git_manager = get_git_manager();
+        warn!("FETCHING!");
+        let fetch = git_manager.download_remote_repository(&repo);
+        warn!("FETCHED!");
+        if fetch.is_err() {
+            cloned_ctx.set_status(compose::Status::ErrorFetchingRepo(fetch.err().unwrap()));
+        }
+        match get_git_manager().clone_local_by_reference(&repo.clone(), &reference.clone(), id) {
+            Ok(_) => cloned_ctx.set_status(compose::Status::RepoReady),
+            Err(err) => cloned_ctx.set_status(compose::Status::ErrorFetchingRepo(err)),
+        };
+    });
+
+    ctx.set_handle(handle);
 
     {
-        let mut hash = agent_state.clone().write().unwrap();
-        hash.insert(ctx.id(), ctx.clone());
+        let mut hash = agent_state.write().unwrap();
+        hash.insert(id, ctx);
     }
-
-    ctx.fetch_repo();
 
     AcceptResponder {
         inner: rocket::response::status::Accepted(Some(format!("{{\"id\":\"{}\"}}", id))),
@@ -105,7 +124,7 @@ pub fn status(
     };
 
     {
-        let hash = agent_state.clone().read().unwrap();
+        let hash = agent_state.read().unwrap();
         match hash.get(&id) {
             Some(ctx) => Ok(Json(ctx.status())),
             None => Err(rocket::response::status::Custom(
@@ -134,7 +153,7 @@ pub fn show(
     };
 
     {
-        let hash = agent_state.clone().read().unwrap();
+        let hash = agent_state.read().unwrap();
         match hash.get(&id) {
             Some(ctx) => Ok(Json(ctx.status())),
             None => Err(rocket::response::status::Custom(
@@ -145,53 +164,129 @@ pub fn show(
     }
 }
 
-//#[cfg(test)]
-// mod test {
-//     use crate::compose::Status as ComposeStatus;
-//     use crate::endpoints::compose::{self, NewComposeRequest};
-//     use crate::rocket;
-//     use rocket::http::{ContentType, Status};
-//     use rocket::local::blocking::Client;
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::compose::Status as ComposeStatus;
+    use crate::endpoints::compose::{self, NewComposeRequest};
+    use crate::rocket;
+    use rocket::http::{ContentType, Status};
+    use rocket::local::blocking::Client;
+    use std::{thread, time};
 
-//     fn simple_new_compose_request_data() -> String {
-//         serde_json::to_string(&NewComposeRequest {
-//             github_user: "docker",
-//             github_repo: "awesome-compose",
-//             path: "plex/compose.yaml",
-//         })
-//         .unwrap()
-//     }
+    fn simple_new_compose_request_data(branch: String) -> String {
+        serde_json::to_string(&NewComposeRequest {
+            github_user: "docker",
+            github_repo: "awesome-compose",
+            path: "plex/compose.yaml",
+            reference: crate::git_manager::GitReference::Branch(branch),
+        })
+        .unwrap()
+    }
 
-//     fn new() {
-//         let client = Client::tracked(rocket()).expect("valid rocket instance");
-//         let response = client.post(uri!(compose::new)).dispatch();
-//         assert_eq!(response.status(), Status::BadRequest);
-//         let response = client
-//             .post(uri!(compose::new))
-//             .body(&simple_new_compose_request_data())
-//             .dispatch();
-//         let location = response.headers().get_one("Location").unwrap();
-//         assert_eq!(response.content_type(), Some(ContentType::JSON));
-//         assert!(location.to_string().starts_with("/compose/status/"));
-//         let response = client.get(location).dispatch();
-//         assert_eq!(response.status(), Status::Ok);
-//         let mut status = response.into_json::<ComposeStatus>().unwrap();
-//         loop {
-//             match status {
-//                 ComposeStatus::Fetching => {
-//                     status = client
-//                         .get(location)
-//                         .dispatch()
-//                         .into_json::<ComposeStatus>()
-//                         .unwrap();
-//                     println!("Fetching")
-//                 }
-//                 _ => break,
-//             }
-//         }
-//         assert!(matches!(status, ComposeStatus::Fetched { .. }));
-//     }
+    #[test]
+    fn new() {
+        crate::utils::initialize_logger();
+        let client = Client::tracked(rocket()).expect("valid rocket instance");
+        let response = client.post(uri!(compose::new)).dispatch();
+        assert_eq!(response.status(), Status::BadRequest);
+        let response = client
+            .post(uri!(compose::new))
+            .body(&simple_new_compose_request_data(String::from("main")))
+            .dispatch();
+        let location = response.headers().get_one("Location").unwrap();
+        assert_ne!(location, String::from(""));
+        assert!(location.to_string().starts_with("/compose/status/"));
+        assert_eq!(response.content_type(), Some(ContentType::JSON));
+        warn!("{}", response.into_string().unwrap());
+    }
 
+    #[test]
+    fn status_errored() {
+        crate::utils::initialize_logger();
+        let client = Client::tracked(rocket()).expect("valid rocket instance");
+        let response = client
+            .post(uri!(compose::new))
+            .body(&simple_new_compose_request_data(String::from("maddin")))
+            .dispatch();
+        let location = response.headers().get_one("Location").unwrap();
+        let response = client.get(location).dispatch();
+        assert_eq!(response.status(), Status::Ok);
+        let mut status = response.into_json::<ComposeStatus>().unwrap();
+        let one_sec = time::Duration::from_secs(1);
+        loop {
+            thread::sleep(one_sec);
+            match status {
+                ComposeStatus::FetchingRepo => {
+                    status = client
+                        .get(location)
+                        .dispatch()
+                        .into_json::<ComposeStatus>()
+                        .unwrap();
+                }
+                _ => break,
+            }
+        }
+        assert!(matches!(status, ComposeStatus::ErrorFetchingRepo { .. }));
+    }
+
+    #[test]
+    fn status_ok() {
+        crate::utils::initialize_logger();
+        let client = Client::tracked(rocket()).expect("valid rocket instance");
+        let response = client
+            .post(uri!(compose::new))
+            .body(&simple_new_compose_request_data(String::from("master")))
+            .dispatch();
+        let location = response.headers().get_one("Location").unwrap();
+        let response = client.get(location).dispatch();
+        assert_eq!(response.status(), Status::Ok);
+        let mut status = response.into_json::<ComposeStatus>().unwrap();
+        let one_sec = time::Duration::from_secs(1);
+        loop {
+            thread::sleep(one_sec);
+            println!("status {:?}", status);
+            match status {
+                ComposeStatus::FetchingRepo => {
+                    status = client
+                        .get(location)
+                        .dispatch()
+                        .into_json::<ComposeStatus>()
+                        .unwrap();
+                }
+                _ => break,
+            }
+        }
+        println!("{:?}", status);
+        assert!(matches!(status, ComposeStatus::RepoReady { .. }));
+        let response = client
+            .post(uri!(compose::new))
+            .body(&simple_new_compose_request_data(String::from(
+                "atomist/pin-docker-base-image/nginx-aspnet-mysql/backend/dockerfile",
+            )))
+            .dispatch();
+        let location = response.headers().get_one("Location").unwrap();
+        let response = client.get(location).dispatch();
+        assert_eq!(response.status(), Status::Ok);
+        let mut status = response.into_json::<ComposeStatus>().unwrap();
+        let one_sec = time::Duration::from_secs(1);
+        loop {
+            thread::sleep(one_sec);
+            match status {
+                ComposeStatus::FetchingRepo => {
+                    status = client
+                        .get(location)
+                        .dispatch()
+                        .into_json::<ComposeStatus>()
+                        .unwrap();
+                }
+                _ => break,
+            }
+        }
+        debug!("{:?}", status);
+        assert!(matches!(status, ComposeStatus::RepoReady { .. }));
+    }
+}
 //     #[test]
 //     fn status_ok() {
 //         let client = Client::tracked(rocket()).expect("valid rocket instance");

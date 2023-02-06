@@ -1,4 +1,4 @@
-use crate::config::{self, get_config};
+use crate::config::get_config;
 use log::warn;
 use once_cell::sync::Lazy;
 use std::path::PathBuf;

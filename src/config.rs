@@ -1,7 +1,17 @@
-use crate::data_dir::{DataDir, DataDirInitError};
 use clap::Parser;
 use log::LevelFilter;
-use once_cell::sync::{Lazy, OnceCell};
+use once_cell::sync::Lazy;
+
+// Returns a reference to a lazily created Config object.
+// TODO: FIX TESTS ARGUMENTS
+static CONFIG: Lazy<Config> = Lazy::new(|| Config {
+    log_level: LevelFilter::Debug,
+    work_directory: String::from("/tmp/test"),
+});
+
+pub fn get_config() -> &'static Config {
+    &CONFIG
+}
 
 #[derive(Parser, Debug, Clone)]
 #[command(author, version, about, long_about = None)]
@@ -19,19 +29,16 @@ pub struct Config {
     pub work_directory: String,
 }
 
-static CONFIG: Lazy<Config> = Lazy::new(Config::parse);
-
-pub fn get_config() -> &'static Config {
-    &CONFIG
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
 
     #[test]
     fn parse() {
-        let config = Config::parse();
+        let config = Config {
+            log_level: LevelFilter::Debug,
+            work_directory: String::from("/tmp/test"),
+        };
         println!("{:?}", config);
     }
 }

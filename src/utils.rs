@@ -7,6 +7,6 @@ pub fn initialize_logger() {
     INIT_LOGGER.call_once(|| {
         env_logger::Builder::new()
             .filter_level(config.log_level)
-            .try_init();
+            .init();
     });
 }

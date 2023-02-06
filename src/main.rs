@@ -16,9 +16,6 @@ mod endpoints;
 mod git_manager;
 mod utils;
 
-use config::Config;
-use data_dir::DataDir;
-
 extern crate log;
 
 // #[get("/fetch/<id>")]
@@ -47,7 +44,7 @@ extern crate log;
 // GET /compose/%{id}
 // Returns the component
 
-type AgentState = Arc<RwLock<HashMap<Uuid, compose::Context>>>;
+type AgentState = Arc<RwLock<HashMap<Uuid, Arc<compose::Context>>>>;
 
 #[launch]
 fn rocket_launch() -> _ {
@@ -57,7 +54,7 @@ fn rocket_launch() -> _ {
 }
 
 fn rocket() -> rocket::Rocket<rocket::Build> {
-    let state: AgentState = Arc::new(RwLock::new(HashMap::<Uuid, compose::Context>::new()));
+    let state: AgentState = Arc::new(RwLock::new(HashMap::<Uuid, Arc<compose::Context>>::new()));
     rocket::build()
         .manage(state)
         .mount("/", routes![endpoints::compose::new])
