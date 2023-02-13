@@ -1,6 +1,6 @@
 #[cfg(test)]
 use crate::data_dir::DataDir;
-use std::env;
+
 use std::process::{Command, Output};
 use std::{thread, time};
 use tempfile::{tempdir, TempDir};
