@@ -4,9 +4,15 @@ use once_cell::sync::Lazy;
 
 // Returns a reference to a lazily created Config object.
 // TODO: FIX TESTS ARGUMENTS
-static CONFIG: Lazy<Config> = Lazy::new(|| Config {
-    log_level: LevelFilter::Debug,
-    work_directory: String::from("/tmp/test"),
+static CONFIG: Lazy<Config> = Lazy::new(|| {
+    if cfg!(test) {
+        Config {
+            log_level: LevelFilter::Debug,
+            work_directory: String::from("/tmp/test"),
+        }
+    } else {
+        Config::parse()
+    }
 });
 
 pub fn get_config() -> &'static Config {

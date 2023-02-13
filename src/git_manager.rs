@@ -6,8 +6,11 @@ use rocket::serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::env;
 use std::fs;
+use std::io::{self, Write};
 use std::path::Path;
 use std::path::PathBuf;
+use std::str;
+use std::sync::Mutex;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -50,6 +53,7 @@ impl From<git2::Error> for GitManagerCloneError {
 /// Data structure to manage docker-compose execution
 pub struct GitManager<'a> {
     data_dir: &'a DataDir,
+    mutex: Mutex<usize>,
 }
 
 impl<'a> GitManager<'a> {
@@ -82,7 +86,10 @@ impl<'a> GitManager<'a> {
             return Err(GitManagerInitError::DirectoryNotWritable);
         }
 
-        Ok(Self { data_dir })
+        Ok(Self {
+            data_dir,
+            mutex: Mutex::new(0),
+        })
     }
 
     ///
@@ -130,8 +137,7 @@ impl<'a> GitManager<'a> {
             repo.target_dir(self.data_dir).to_str().unwrap()
         );
         let target_dir = self.data_dir.work_path().unwrap().join(uuid.to_string());
-        self.fetch_branch(branch, repo)?;
-
+        self.fetch(&[branch], repo)?;
         self.builder()
             .bare(false)
             .clone_local(CloneLocal::Local)
@@ -183,16 +189,19 @@ impl<'a> GitManager<'a> {
         }
     }
 
-    pub fn fetch_branch(
+    pub fn fetch(
         &self,
-        branch: &str,
+        branches: &[&str],
         repo: &impl RemoteRepo,
     ) -> Result<(), GitManagerCloneError> {
-        self.download_remote_repository(repo)?;
         let target_dir = repo.target_dir(self.data_dir);
         let repo = git2::Repository::open(target_dir)?;
         let mut remote = repo.find_remote("origin")?;
-        remote.fetch(&[branch], Some(&mut fetch_options()), None)?;
+        {
+            let _guard = self.mutex.lock().unwrap();
+            remote.download(branches, Some(&mut fetch_options()))?;
+            remote.update_tips(None, true, git2::AutotagOption::Unspecified, None)?;
+        }
 
         Ok(())
     }
@@ -210,51 +219,69 @@ impl<'a> GitManager<'a> {
         repo: &impl RemoteRepo,
     ) -> Result<(), GitManagerCloneError> {
         let target_dir = repo.target_dir(self.data_dir);
+        let result;
+        {
+            debug!(
+                "Fetching repo, adquiring lock. target_dir is: {:?}",
+                target_dir
+            );
+            let mutex_guard = self.mutex.lock().unwrap();
 
-        let result = self
-            .builder()
-            .fetch_options(fetch_options())
-            .with_checkout(CheckoutBuilder::new())
-            .bare(true)
-            .clone(&repo.url(), &target_dir);
-        match result {
-            Ok(_) => {
-                // This is so we track every remote ref
-                let mut config = Config::new().unwrap();
-                config.add_file(
-                    target_dir.join("config").as_path(),
-                    git2::ConfigLevel::Local,
-                    false,
-                )?;
-                config.remove("remote.origin.fetch").unwrap();
-                config
-                    .set_str("remote.origin.fetch", "+refs/*:refs/*")
-                    .unwrap();
-                Ok(())
-            }
-            Err(err) => {
-                // If we find that there is already a repo and a valid one, we leave.
-                // otherwise, we delete it and retry.
-                if err.code() == git2::ErrorCode::Exists && err.class() == git2::ErrorClass::Invalid
-                {
-                    match git2::Repository::open(&target_dir) {
-                        Err(_err) => {
-                            warn!("Repo directory exists but is not a valid repo, will delete it and try to clone again.");
-                            match fs::remove_dir_all(&target_dir) {
-                                Ok(()) => return self.download_remote_repository(repo),
-                                Err(err) => {
-                                    return Err(GitManagerCloneError::CouldNotDeleteRepoDir(
-                                        err.to_string(),
-                                    ))
+            result = self
+                .builder()
+                .fetch_options(fetch_options())
+                .with_checkout(CheckoutBuilder::new())
+                .bare(true)
+                .clone(&repo.url(), &target_dir);
+
+            match result {
+                Ok(_) => {
+                    // This is so we track every remote ref
+                    debug!(
+                        "Repo cloned, reconfiguring to fetch every ref. Target_dir is: {:?}",
+                        target_dir
+                    );
+
+                    let mut config = Config::new().unwrap();
+                    config.add_file(
+                        target_dir.join("config").as_path(),
+                        git2::ConfigLevel::Local,
+                        false,
+                    )?;
+                    config.remove("remote.origin.fetch").unwrap();
+                    config
+                        .set_str("remote.origin.fetch", "+refs/*:refs/*")
+                        .unwrap();
+                    Ok(())
+                }
+                Err(err) => {
+                    // If we find that there is already a repo and a valid one, we leave.
+                    // otherwise, we delete it and retry.
+                    if err.code() == git2::ErrorCode::Exists
+                        && err.class() == git2::ErrorClass::Invalid
+                    {
+                        match git2::Repository::open(&target_dir) {
+                            Err(_err) => {
+                                warn!("Repo directory exists but is not a valid repo, will delete it and try to clone again.");
+                                match fs::remove_dir_all(&target_dir) {
+                                    Ok(()) => {
+                                        drop(mutex_guard);
+                                        return self.download_remote_repository(repo);
+                                    }
+                                    Err(err) => {
+                                        return Err(GitManagerCloneError::CouldNotDeleteRepoDir(
+                                            err.to_string(),
+                                        ));
+                                    }
                                 }
                             }
-                        }
-                        Ok(_repo) => {
-                            return Ok(());
+                            Ok(_repo) => {
+                                return Ok(());
+                            }
                         }
                     }
+                    Err(GitManagerCloneError::GitError(err.to_string()))
                 }
-                Err(GitManagerCloneError::GitError(err.to_string()))
             }
         }
     }
@@ -277,14 +304,40 @@ fn fetch_options() -> FetchOptions<'static> {
 
     fetch_options.prune(git2::FetchPrune::On);
     fetch_options.download_tags(git2::AutotagOption::All);
-    fetch_options.remote_callbacks(auth_callbacks());
+    let mut callbacks = RemoteCallbacks::new();
+    transfer_progress(&mut callbacks);
+    auth_callbacks(&mut callbacks);
+    update_tips(&mut callbacks);
+    fetch_options.remote_callbacks(callbacks);
 
     fetch_options
 }
 
+fn transfer_progress(callbacks: &mut RemoteCallbacks) {
+    callbacks.transfer_progress(|stats| {
+        println!("STATS {:?}", stats.indexed_deltas());
+        if stats.received_objects() == stats.total_objects() {
+            print!(
+                "Resolving deltas {}/{}\r",
+                stats.indexed_deltas(),
+                stats.total_deltas()
+            );
+        } else if stats.total_objects() > 0 {
+            print!(
+                "Received {}/{} objects ({}) in {} bytes\r",
+                stats.received_objects(),
+                stats.total_objects(),
+                stats.indexed_objects(),
+                stats.received_bytes()
+            );
+        }
+        io::stdout().flush().unwrap();
+        true
+    });
+}
+
 // @TODO: Deal with auth
-fn auth_callbacks() -> RemoteCallbacks<'static> {
-    let mut callbacks = RemoteCallbacks::new();
+fn auth_callbacks(callbacks: &mut RemoteCallbacks) {
     callbacks.credentials(|_url, username_from_url, _allowed_types| {
         Cred::ssh_key(
             username_from_url.unwrap(),
@@ -293,7 +346,17 @@ fn auth_callbacks() -> RemoteCallbacks<'static> {
             None,
         )
     });
-    callbacks
+}
+
+fn update_tips(callbacks: &mut RemoteCallbacks) {
+    callbacks.update_tips(|refname, a, b| {
+        if a.is_zero() {
+            println!("[new]     {:20} {}", b, refname);
+        } else {
+            println!("[updated] {:10}..{:10} {}", a, b, refname);
+        }
+        true
+    });
 }
 
 /// This is a trait that references a remote git repository.
@@ -387,11 +450,10 @@ pub fn get_git_manager() -> &'static GitManager<'static> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::test_utils::{self, git_commit_all, temp_data_dir};
+    use crate::test_utils::{self, git_commit_all, sleep, temp_data_dir};
     use crate::utils::initialize_logger;
     use rocket::tokio;
     use std::fs::File;
-    use std::io::prelude::*;
     use std::os::unix::fs::MetadataExt;
     use uuid::uuid;
 
@@ -399,23 +461,26 @@ mod test {
     // @TODO: DRY this with the commit version
     // When a branch receives new commits, the clone done by the agent will reflect that.
     fn commits_same_branch_by_branch() {
+        initialize_logger();
         let (_tempdir, data_dir) = temp_data_dir();
         let empty_repo = test_utils::git_empty_repo();
-        let mut file = File::create(empty_repo.path().join("test.txt")).expect("can create");
+        let mut file = File::create(empty_repo.path().join("test-branch.txt")).expect("can create");
         file.write_all(b"Hello, world!").expect("can write");
 
         git_commit_all(&empty_repo);
         let repo = UrlRepo::new(format!("file://{}", &empty_repo.path().to_string_lossy()));
         let manager = manager_instance(&data_dir).unwrap();
+
         manager.download_remote_repository(&repo).unwrap();
         let uuid = uuid!("f37915a0-7195-11ed-a1eb-0242ac120010");
+
         manager.clone_local_by_branch(&repo, "main", uuid).unwrap();
         assert!(Path::new(
             &data_dir
                 .work_path()
                 .unwrap()
                 .join(uuid.to_string())
-                .join("test.txt")
+                .join("test-branch.txt")
         )
         .exists());
 
@@ -438,33 +503,32 @@ mod test {
     // @TODO: DRY this with the branch version
     // When a branch receives new commits, the clone done by the agent will reflect that (by commit)
     fn commits_same_branch_by_commit() {
+        initialize_logger();
         let (_tempdir, data_dir) = temp_data_dir();
         let empty_repo = test_utils::git_empty_repo();
         let mut file = File::create(empty_repo.path().join("test.txt")).expect("can create");
         file.write_all(b"Hello, world!").expect("can write");
-
         git_commit_all(&empty_repo);
         let repo = UrlRepo::new(format!("file://{}", &empty_repo.path().to_string_lossy()));
         let manager = manager_instance(&data_dir).unwrap();
         manager.download_remote_repository(&repo).unwrap();
         let uuid = uuid!("f37915a0-7195-11ed-a1eb-0242ac120010");
         manager.clone_local_by_branch(&repo, "main", uuid).unwrap();
-        assert!(Path::new(
-            &data_dir
-                .work_path()
-                .unwrap()
-                .join(uuid.to_string())
-                .join("test.txt")
-        )
-        .exists());
+        let work_path = &data_dir.work_path().unwrap().join(uuid.to_string());
+
+        assert!(&work_path.join("test.txt").exists());
 
         let mut file = File::create(empty_repo.path().join("test2.txt")).expect("can create");
         file.write_all(b"Hello, world!").expect("can write");
         let commit = git_commit_all(&empty_repo);
         let uuid = uuid!("f37915a0-7195-11ed-a1eb-0242ac120017");
-        manager.download_remote_repository(&repo).unwrap();
-        println!("commit: {}", &commit);
+        manager.fetch(&[] as &[&str], &repo).unwrap();
+        println!("commit: {:?}", &commit);
+        println!("dir: {:?}", &_tempdir);
+        println!("empty_repo: {:?}", &empty_repo);
+
         manager.clone_local_by_commit(&repo, &commit, uuid).unwrap();
+
         assert!(Path::new(
             &data_dir
                 .work_path()
@@ -475,29 +539,31 @@ mod test {
         .exists());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     async fn concurrent_clones() {
-        let (_tempdir, data_dir) = temp_data_dir();
+        initialize_logger();
 
         let repo = GitHubRepo {
             user: String::from("kittengrid"),
             repo: String::from("deb-s3"),
         };
-        let repo_cloned = repo.clone();
-        let data_dir2 = data_dir.clone();
-        let first = tokio::task::spawn(async move {
-            let manager = manager_instance(&data_dir).unwrap();
-            let result = manager.download_remote_repository(&repo);
-            assert!(result.is_ok());
-        });
 
-        let second = tokio::task::spawn(async move {
-            let manager = manager_instance(&data_dir2).unwrap();
-            let result = manager.download_remote_repository(&repo_cloned);
-            assert!(result.is_ok());
-        });
-        first.await.unwrap();
-        second.await.unwrap();
+        let mut handles = std::vec::Vec::new();
+        for i in 0..5 {
+            handles.push({
+                let repo = repo.clone();
+                tokio::spawn(async move {
+                    println!("I am {}", i);
+                    let manager = get_git_manager();
+                    let result = manager.download_remote_repository(&repo);
+                    println!("{:?}", result);
+                    assert!(result.is_ok());
+                })
+            });
+        }
+        while let Some(handle) = handles.pop() {
+            handle.await.unwrap();
+        }
     }
 
     #[test]

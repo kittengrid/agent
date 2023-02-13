@@ -74,11 +74,8 @@ pub async fn new(
     let cloned_ctx = ctx.clone();
 
     let handle = tokio::task::spawn(async move {
-        warn!("DOING SOMETHING");
         let git_manager = get_git_manager();
-        warn!("FETCHING!");
         let fetch = git_manager.download_remote_repository(&repo);
-        warn!("FETCHED!");
         if fetch.is_err() {
             cloned_ctx.set_status(compose::Status::ErrorFetchingRepo(fetch.err().unwrap()));
         }
@@ -213,9 +210,7 @@ mod test {
         let response = client.get(location).dispatch();
         assert_eq!(response.status(), Status::Ok);
         let mut status = response.into_json::<ComposeStatus>().unwrap();
-        let one_sec = time::Duration::from_secs(1);
         loop {
-            thread::sleep(one_sec);
             match status {
                 ComposeStatus::FetchingRepo => {
                     status = client
