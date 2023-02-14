@@ -163,7 +163,7 @@ pub fn show(
 
 #[cfg(test)]
 mod test {
-    
+
     use crate::compose::Status as ComposeStatus;
     use crate::endpoints::compose::{self, NewComposeRequest};
     use crate::rocket;

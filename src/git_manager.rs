@@ -66,9 +66,11 @@ impl<'a> GitManager<'a> {
     /// # Examples
     ///
     /// ```
+    /// # use lib::*;
     /// use data_dir::DataDir;
+    /// use git_manager::GitManager;
     /// let data_dir = DataDir::new("/var/lib/kittengrid-agent".into());
-    /// let git_manager = GitManager::new(data_dir);
+    /// let git_manager = GitManager::new(&data_dir);
     /// ```
     ///
     pub fn new(data_dir: &'a DataDir) -> Result<Self, GitManagerInitError> {

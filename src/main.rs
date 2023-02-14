@@ -3,20 +3,8 @@
 extern crate rocket;
 
 use std::collections::HashMap;
-use uuid::Uuid;
-
 use std::sync::{Arc, RwLock};
-//Rocket
-
-mod compose;
-mod config;
-mod data_dir;
-mod docker_compose;
-mod endpoints;
-mod git_manager;
-mod utils;
-
-extern crate log;
+use uuid::Uuid;
 
 // #[get("/fetch/<id>")]
 // fn fetch(id: &str, state: &State<ComposeState>) -> String {
@@ -44,24 +32,7 @@ extern crate log;
 // GET /compose/%{id}
 // Returns the component
 
-type AgentState = Arc<RwLock<HashMap<Uuid, Arc<compose::Context>>>>;
-
 #[launch]
 fn rocket_launch() -> _ {
-    utils::initialize_logger();
-
-    rocket()
+    lib::rocket()
 }
-
-fn rocket() -> rocket::Rocket<rocket::Build> {
-    let state: AgentState = Arc::new(RwLock::new(HashMap::<Uuid, Arc<compose::Context>>::new()));
-    rocket::build()
-        .manage(state)
-        .mount("/", routes![endpoints::compose::new])
-        .mount("/", routes![endpoints::compose::status])
-        .mount("/", routes![endpoints::compose::show])
-        .mount("/", routes![endpoints::sys::hello])
-}
-
-#[cfg(test)]
-mod test_utils;
