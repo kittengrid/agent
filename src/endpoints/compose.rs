@@ -1,7 +1,9 @@
-use crate::compose;
+use crate::docker_compose::DockerCompose;
 use crate::git_manager::{get_git_manager, GitHubRepo, GitReference};
+use crate::{compose, data_dir};
 use rocket::http::{Header, Status};
 use rocket::serde::{json::Json, Deserialize, Serialize};
+use std::path::Path;
 use std::sync::Arc;
 use tokio;
 
@@ -64,6 +66,7 @@ pub async fn new(
     let id = Uuid::new_v4();
     let repo = GitHubRepo::new(request_data.github_user, request_data.github_repo);
     let reference = request_data.reference.clone();
+    let path = String::from(request_data.path);
 
     let ctx = Arc::new(compose::Context::new(
         compose::Status::FetchingRepo,
@@ -75,14 +78,43 @@ pub async fn new(
 
     let handle = tokio::task::spawn(async move {
         let git_manager = get_git_manager();
+        let data_dir = data_dir::get_data_dir();
+
         let fetch = git_manager.download_remote_repository(&repo);
         if fetch.is_err() {
             cloned_ctx.set_status(compose::Status::ErrorFetchingRepo(fetch.err().unwrap()));
         }
         match get_git_manager().clone_local_by_reference(&repo.clone(), &reference.clone(), id) {
             Ok(_) => cloned_ctx.set_status(compose::Status::RepoReady),
-            Err(err) => cloned_ctx.set_status(compose::Status::ErrorFetchingRepo(err)),
+            Err(err) => {
+                cloned_ctx.set_status(compose::Status::ErrorFetchingRepo(err));
+                return;
+            }
         };
+
+        let mut docker_compose;
+        match DockerCompose::new(data_dir) {
+            Ok(ok) => docker_compose = ok,
+            Err(err) => {
+                cloned_ctx.set_status(compose::Status::ErrorInitializingDockerCompose(err));
+                return;
+            }
+        }
+
+        let wd = data_dir
+            .work_path()
+            .unwrap()
+            .join(Path::new(&id.to_string()));
+
+        docker_compose
+            .cwd(wd.into_os_string().into_string().unwrap())
+            .project_name(id.to_string())
+            .compose_file(path);
+        cloned_ctx.set_status(compose::Status::ComposeInitialized);
+        match docker_compose.start() {
+            Ok(_) => cloned_ctx.set_status(compose::Status::ComposeStarted),
+            Err(err) => cloned_ctx.set_status(compose::Status::ComposeStartingError(err)),
+        }
     });
 
     ctx.set_handle(handle);

@@ -1,5 +1,5 @@
 use crate::data_dir::{DataDir, DataDirError};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Error;
@@ -17,22 +17,22 @@ pub struct DockerCompose<'a> {
     env: HashMap<String, String>,
 }
 
-#[derive(Error, Debug)]
+#[derive(Debug, Error, Serialize, Deserialize, Clone)]
 pub enum DockerComposeInitError {
     #[error("Cannot write docker-compose binary into state dir ({}).", .0)]
-    BinaryNotWritable(Error),
+    BinaryNotWritable(String),
     #[error("Directory not initialized")]
     DirectoryNotInitialized,
 }
 
-#[derive(Error, Debug)]
+#[derive(Debug, Error, Serialize, Deserialize, Clone)]
 pub enum DockerComposeRunError {
     #[error("Cannot call docker compose without specifying a compose-file.")]
     NoDockerComposeFile,
     #[error("Could not execute the docker compose command ({}).", .0)]
-    ExecutionError(Error),
-    #[error("Exit status was not zero. Was ({})", .0.status.code().unwrap())]
-    ErrorExitStatus(Output),
+    ExecutionError(String),
+    #[error("Exit status was not zero. More info ({})", .0)]
+    ErrorExitStatus(String),
     #[error("Docker compose file not found or not readable ({}).", .0)]
     DockerComposeFileNotFound(String),
 }
@@ -92,7 +92,7 @@ impl<'a> DockerCompose<'a> {
 
         // @TODO: Do not write it again if the file exists
         match std::fs::write(&binary_path, binary_data) {
-            Err(why) => Err(DockerComposeInitError::BinaryNotWritable(why)),
+            Err(why) => Err(DockerComposeInitError::BinaryNotWritable(why.to_string())),
             Ok(_) => {
                 let mut perms = fs::metadata(&binary_path).unwrap().permissions();
                 perms.set_mode(0o700); // Read/write for owner and read for others.
@@ -280,10 +280,12 @@ impl<'a> DockerCompose<'a> {
                 if output.status.success() {
                     Ok(output)
                 } else {
-                    Err(DockerComposeRunError::ErrorExitStatus(output))
+                    Err(DockerComposeRunError::ErrorExitStatus(
+                        Self::output_to_string(output),
+                    ))
                 }
             }
-            Err(err) => Err(DockerComposeRunError::ExecutionError(err)),
+            Err(err) => Err(DockerComposeRunError::ExecutionError(err.to_string())),
         }
     }
 
@@ -291,6 +293,16 @@ impl<'a> DockerCompose<'a> {
     // docker compose.
     fn clean(&mut self) {
         self.down(true, Some(String::from("all")), true);
+    }
+
+    fn output_to_string(output: Output) -> String {
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let status = output.status.code().unwrap();
+        format!(
+            "{{status: \"{}\", stdout: \"{}\", stderr: \"{}\"}}",
+            stdout, stderr, status
+        )
     }
 }
 

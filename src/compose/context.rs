@@ -1,5 +1,6 @@
 use crate::git_manager::{GitHubRepo, GitManagerCloneError, GitReference};
 
+use crate::docker_compose::{DockerComposeInitError, DockerComposeRunError};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, LockResult, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use uuid::Uuid;
@@ -10,6 +11,10 @@ pub enum Status {
     FetchingRepo,
     RepoReady,
     ErrorFetchingRepo(GitManagerCloneError),
+    ErrorInitializingDockerCompose(DockerComposeInitError),
+    ComposeInitialized,
+    ComposeStarted,
+    ComposeStartingError(DockerComposeRunError),
 }
 
 #[derive(Debug)]
