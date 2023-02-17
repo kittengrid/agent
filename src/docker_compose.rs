@@ -6,7 +6,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use std::str::{self, FromStr};
+use std::str::{self};
 use thiserror::Error;
 
 /// Data structure to manage docker-compose execution
@@ -349,7 +349,7 @@ mod test {
     #[test]
     fn invoke_with_valid_directory_and_incorrect_docker_compose_file_path() {
         let docker_compose_handler = DockerComposeHandler::new();
-        let mut compose = docker_compose_handler.docker_compose("I do not exist");
+        let compose = docker_compose_handler.docker_compose("I do not exist");
         assert!(matches!(
             compose.create().err().unwrap(),
             DockerComposeRunError::DockerComposeFileNotFound(_)
@@ -360,7 +360,7 @@ mod test {
     fn invoke_with_incorrect_directory_and_a_valid_docker_compose_file_path_with_invalid_contents()
     {
         let docker_compose_handler = DockerComposeHandler::new();
-        let mut compose = docker_compose_handler.docker_compose("simple-compose-gone-wrong.yaml");
+        let compose = docker_compose_handler.docker_compose("simple-compose-gone-wrong.yaml");
         assert!(matches!(
             compose.create().err().unwrap(),
             DockerComposeRunError::ErrorExitStatus(_)
@@ -386,7 +386,7 @@ mod test {
     #[test]
     fn rm_deletes_containers_when_force_stop_is_set_to_true() {
         let docker_compose_handler = DockerComposeHandler::new();
-        let mut compose = docker_compose_handler.docker_compose("simple-compose.yaml");
+        let compose = docker_compose_handler.docker_compose("simple-compose.yaml");
 
         compose.create().unwrap();
         compose.start().unwrap();

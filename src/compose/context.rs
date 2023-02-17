@@ -2,7 +2,7 @@ use crate::git_manager::{GitHubRepo, GitManagerCloneError, GitReference};
 
 use crate::docker_compose::{DockerCompose, DockerComposeInitError, DockerComposeRunError};
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, LockResult, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{Arc, LockResult, RwLock, RwLockReadGuard};
 use uuid::Uuid;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

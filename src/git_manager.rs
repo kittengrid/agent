@@ -452,7 +452,7 @@ pub fn get_git_manager() -> &'static GitManager<'static> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::test_utils::{self, git_commit_all, temp_data_dir};
+    use crate::test_utils::{self, git_commit_all};
     use crate::utils::initialize_logger;
     use rocket::tokio;
     use std::fs::File;
