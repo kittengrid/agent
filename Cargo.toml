@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [[bin]]
-name = "main"
+name = "kittengrid-agent"
 path = "src/main.rs"
 
 [lib]
@@ -28,6 +28,7 @@ thiserror = "1.0"
 tempfile = "3.3.0"
 url = "2.3.1"
 sha2 = "0.10.6"
+arc-swap = "1.6.0"
 
 [dependencies.uuid]
 version = "1.1.2"

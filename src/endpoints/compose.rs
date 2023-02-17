@@ -59,7 +59,7 @@ pub struct NewComposeRequest<'r> {
 #[post("/compose", data = "<request_data>")]
 // TODO: meaningful errors (What the heck check https://github.com/SergioBenitez/Rocket/issues/749)
 pub async fn new(
-    agent_state: &State<crate::AgentState>,
+    agent_state: &'_ State<crate::AgentState<'_>>,
     request_path: PathCatcher,
     request_data: Json<NewComposeRequest<'_>>,
 ) -> AcceptResponder {
@@ -74,71 +74,172 @@ pub async fn new(
         reference.clone(),
         vec![],
     ));
-    let cloned_ctx = ctx.clone();
 
-    let handle = tokio::task::spawn(async move {
-        let git_manager = get_git_manager();
-        let data_dir = data_dir::get_data_dir();
+    {
+        let ctx = ctx.clone();
+        let mut hash = agent_state.write().unwrap();
+        hash.insert(id, ctx);
+    }
 
-        let fetch = git_manager.download_remote_repository(&repo);
-        if fetch.is_err() {
-            cloned_ctx.set_status(compose::Status::ErrorFetchingRepo(fetch.err().unwrap()));
-        }
-        match get_git_manager().clone_local_by_reference(&repo.clone(), &reference.clone(), id) {
-            Ok(_) => cloned_ctx.set_status(compose::Status::RepoReady),
-            Err(err) => {
-                cloned_ctx.set_status(compose::Status::ErrorFetchingRepo(err));
-                return;
+    let handle = tokio::task::spawn({
+        let ctx = ctx.clone();
+        async move {
+            info!(
+		    "Starting docker-compose for repository: {:?}, reference: {:?}, compose_files: {:?}",
+		ctx.repo(),
+		    ctx.repo_reference(),
+		    ctx.paths()
+		);
+            let git_manager = get_git_manager();
+            let data_dir = data_dir::get_data_dir();
+
+            let fetch = git_manager.download_remote_repository(&repo);
+            if fetch.is_err() {
+                ctx.set_status(compose::Status::ErrorFetchingRepo(fetch.err().unwrap()));
             }
-        };
+            match get_git_manager().clone_local_by_reference(&repo.clone(), &reference.clone(), id)
+            {
+                Ok(_) => ctx.set_status(compose::Status::RepoReady),
+                Err(err) => {
+                    ctx.set_status(compose::Status::ErrorFetchingRepo(err));
+                    return;
+                }
+            };
 
-        let mut docker_compose;
-        match DockerCompose::new(data_dir) {
-            Ok(ok) => docker_compose = ok,
-            Err(err) => {
-                cloned_ctx.set_status(compose::Status::ErrorInitializingDockerCompose(err));
-                return;
+            let wd = data_dir
+                .work_path()
+                .unwrap()
+                .join(Path::new(&id.to_string()));
+
+            let docker_compose = match DockerCompose::new(data_dir) {
+                Ok(mut ok) => {
+                    ctx.set_status(compose::Status::ComposeInitialized);
+                    ok.cwd(wd.into_os_string().into_string().unwrap())
+                        .project_name(id.to_string())
+                        .compose_file(path);
+                    ctx.set_docker_compose(ok);
+                    ctx.docker_compose().unwrap()
+                }
+                Err(err) => {
+                    ctx.set_status(compose::Status::ErrorInitializingDockerCompose(err));
+                    return;
+                }
+            };
+
+            match docker_compose.create() {
+                Ok(_) => ctx.set_status(compose::Status::ComposeCreated),
+                Err(err) => ctx.set_status(compose::Status::ComposeCreatingError(err)),
             }
-        }
 
-        let wd = data_dir
-            .work_path()
-            .unwrap()
-            .join(Path::new(&id.to_string()));
-
-        docker_compose
-            .cwd(wd.into_os_string().into_string().unwrap())
-            .project_name(id.to_string())
-            .compose_file(path);
-        cloned_ctx.set_status(compose::Status::ComposeInitialized);
-        match docker_compose.start() {
-            Ok(_) => cloned_ctx.set_status(compose::Status::ComposeStarted),
-            Err(err) => cloned_ctx.set_status(compose::Status::ComposeStartingError(err)),
+            {
+                match docker_compose.start() {
+                    Ok(_) => ctx.set_status(compose::Status::ComposeStarted),
+                    Err(err) => ctx.set_status(compose::Status::ComposeStartingError(err)),
+                }
+            }
         }
     });
 
     ctx.set_handle(handle);
 
-    {
-        let mut hash = agent_state.write().unwrap();
-        hash.insert(id, ctx);
-    }
-
     AcceptResponder {
         inner: rocket::response::status::Accepted(Some(format!("{{\"id\":\"{}\"}}", id))),
         location: Header::new(
             String::from("Location"),
-            format!("{}/status/{}", request_path.path, id),
+            format!("{}{},status", request_path.path, id),
         ),
     }
 }
 
-// GET /compose/status/%{id}
+// GET /compose/%{id}/status
 // Returns Status of the component
 //
 
-#[get("/compose/status/<id>")]
+#[get("/compose/<id>/status")]
 pub fn status(
+    agent_state: &State<crate::AgentState>,
+    id: String,
+) -> Result<Json<compose::Status>, rocket::response::status::Custom<&'static str>> {
+    let id = match Uuid::parse_str(&id) {
+        Ok(id) => id,
+        Err(_err) => {
+            return Err(rocket::response::status::Custom(
+                Status::BadRequest,
+                "Malformed id",
+            ))
+        }
+    };
+
+    {
+        let hash = agent_state.read().unwrap();
+        match hash.get(&id) {
+            Some(ctx) => Ok(Json(ctx.status())),
+            None => Err(rocket::response::status::Custom(
+                Status::NotFound,
+                "Not found",
+            )),
+        }
+    }
+}
+
+// POST /compose/%{id}/stop
+// Stops the docker-compose run.
+//
+
+#[post("/compose/<id>/stop")]
+pub fn stop(
+    agent_state: &State<crate::AgentState>,
+    id: String,
+) -> Result<Json<compose::Status>, rocket::response::status::Custom<&'static str>> {
+    let id = match Uuid::parse_str(&id) {
+        Ok(id) => id,
+        Err(_err) => {
+            return Err(rocket::response::status::Custom(
+                Status::BadRequest,
+                "Malformed id",
+            ))
+        }
+    };
+
+    {
+        let hash = agent_state.read().unwrap();
+        match hash.get(&id) {
+            Some(ctx) => {
+                ctx.set_status(compose::Status::ComposeStopping);
+                match ctx.docker_compose() {
+                    Some(docker_compose) => match docker_compose.stop() {
+                        Ok(_) => {
+                            ctx.set_status(compose::Status::ComposeStopped);
+                            Ok(Json(ctx.status()))
+                        }
+                        Err(err) => {
+                            ctx.set_status(compose::Status::ComposeStoppingError(err));
+                            Err(rocket::response::status::Custom(
+                                Status::InternalServerError,
+                                "ERROR Stopping",
+                            ))
+                        }
+                    },
+                    None => Err(rocket::response::status::Custom(
+                        Status::InternalServerError,
+                        "Docker compose fail",
+                    )),
+                }
+            }
+            None => Err(rocket::response::status::Custom(
+                Status::NotFound,
+                "Not found",
+            )),
+        }
+    }
+}
+
+// POST /compose/%{id}/start
+// Starts the docker-compose run.
+//
+
+#[get("/compose/<id>/start")]
+pub fn start(
     agent_state: &State<crate::AgentState>,
     id: String,
 ) -> Result<Json<compose::Status>, rocket::response::status::Custom<&'static str>> {

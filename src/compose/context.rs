@@ -1,6 +1,6 @@
 use crate::git_manager::{GitHubRepo, GitManagerCloneError, GitReference};
 
-use crate::docker_compose::{DockerComposeInitError, DockerComposeRunError};
+use crate::docker_compose::{DockerCompose, DockerComposeInitError, DockerComposeRunError};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, LockResult, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use uuid::Uuid;
@@ -13,25 +13,31 @@ pub enum Status {
     ErrorFetchingRepo(GitManagerCloneError),
     ErrorInitializingDockerCompose(DockerComposeInitError),
     ComposeInitialized,
+    ComposeCreated,
+    ComposeCreatingError(DockerComposeRunError),
     ComposeStarted,
     ComposeStartingError(DockerComposeRunError),
+    ComposeStopping,
+    ComposeStopped,
+    ComposeStoppingError(DockerComposeRunError),
 }
 
 #[derive(Debug)]
-struct InnerContext {
+struct InnerContext<'a> {
     pub status: Status,
     pub repo: GitHubRepo,
     pub repo_reference: GitReference,
     pub paths: Vec<String>,
     pub handle: Option<rocket::tokio::task::JoinHandle<()>>,
+    pub docker_compose: Option<DockerCompose<'a>>,
     id: Uuid,
 }
 
-pub struct Context {
-    inner: Arc<RwLock<InnerContext>>,
+pub struct Context<'a> {
+    inner: Arc<RwLock<InnerContext<'a>>>,
 }
 
-impl Context {
+impl<'a> Context<'a> {
     pub fn new(
         status: Status,
         repo: GitHubRepo,
@@ -44,14 +50,35 @@ impl Context {
                 repo,
                 repo_reference,
                 paths,
+                docker_compose: None,
                 id: Uuid::new_v4(),
                 handle: None,
             })),
         }
     }
 
+    pub fn repo(&self) -> GitHubRepo {
+        self.read().unwrap().repo.clone()
+    }
+
+    pub fn repo_reference(&self) -> GitReference {
+        self.read().unwrap().repo_reference.clone()
+    }
+
+    pub fn paths(&self) -> Vec<String> {
+        self.read().unwrap().paths.clone()
+    }
+
     pub fn status(&self) -> Status {
         self.read().unwrap().status.clone()
+    }
+
+    pub fn docker_compose(&self) -> Option<DockerCompose<'a>> {
+        self.inner.read().unwrap().docker_compose.clone()
+    }
+
+    pub fn set_docker_compose(&self, docker_compose: DockerCompose<'a>) {
+        self.inner.write().unwrap().docker_compose = Some(docker_compose);
     }
 
     pub fn id(&self) -> Uuid {
@@ -59,22 +86,18 @@ impl Context {
     }
 
     pub fn set_status(&self, status: Status) {
-        self.write().unwrap().status = status;
+        self.inner.write().unwrap().status = status;
     }
 
     pub fn set_handle(&self, handle: rocket::tokio::task::JoinHandle<()>) {
-        self.write().unwrap().handle = Some(handle);
+        self.inner.write().unwrap().handle = Some(handle);
     }
 
-    fn write(&self) -> LockResult<RwLockWriteGuard<'_, InnerContext>> {
-        self.inner.write()
-    }
-
-    fn read(&self) -> LockResult<RwLockReadGuard<'_, InnerContext>> {
+    fn read(&self) -> LockResult<RwLockReadGuard<'_, InnerContext<'_>>> {
         self.inner.read()
     }
 
-    pub fn clone(self: &Context) -> Self {
+    pub fn clone(&self) -> Self {
         Context {
             inner: self.inner.clone(),
         }

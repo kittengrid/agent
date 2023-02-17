@@ -16,7 +16,7 @@ mod utils;
 
 extern crate log;
 use std::sync::{Arc, RwLock};
-pub type AgentState = Arc<RwLock<HashMap<Uuid, Arc<compose::Context>>>>;
+pub type AgentState<'a> = Arc<RwLock<HashMap<Uuid, Arc<compose::Context<'a>>>>>;
 
 pub fn rocket() -> rocket::Rocket<rocket::Build> {
     utils::initialize_logger();
@@ -26,6 +26,8 @@ pub fn rocket() -> rocket::Rocket<rocket::Build> {
         .manage(state)
         .mount("/", routes![endpoints::compose::new])
         .mount("/", routes![endpoints::compose::status])
+        .mount("/", routes![endpoints::compose::stop])
+        .mount("/", routes![endpoints::compose::start])
         .mount("/", routes![endpoints::compose::show])
         .mount("/", routes![endpoints::sys::hello])
 }

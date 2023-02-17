@@ -457,6 +457,7 @@ mod test {
     use rocket::tokio;
     use std::fs::File;
     use std::os::unix::fs::MetadataExt;
+    use tempfile::{tempdir, TempDir};
     use uuid::uuid;
 
     #[test]
@@ -464,14 +465,16 @@ mod test {
     // When a branch receives new commits, the clone done by the agent will reflect that.
     fn commits_same_branch_by_branch() {
         initialize_logger();
-        let (_tempdir, data_dir) = temp_data_dir();
+
         let empty_repo = test_utils::git_empty_repo();
         let mut file = File::create(empty_repo.path().join("test-branch.txt")).expect("can create");
         file.write_all(b"Hello, world!").expect("can write");
 
         git_commit_all(&empty_repo);
         let repo = UrlRepo::new(format!("file://{}", &empty_repo.path().to_string_lossy()));
-        let manager = manager_instance(&data_dir).unwrap();
+        let manager = GitManagerHandler::new();
+        let data_dir = &manager.data_dir;
+        let manager = manager.git_manager().unwrap();
 
         manager.download_remote_repository(&repo).unwrap();
         let uuid = uuid!("f37915a0-7195-11ed-a1eb-0242ac120010");
@@ -506,13 +509,14 @@ mod test {
     // When a branch receives new commits, the clone done by the agent will reflect that (by commit)
     fn commits_same_branch_by_commit() {
         initialize_logger();
-        let (_tempdir, data_dir) = temp_data_dir();
         let empty_repo = test_utils::git_empty_repo();
         let mut file = File::create(empty_repo.path().join("test.txt")).expect("can create");
         file.write_all(b"Hello, world!").expect("can write");
         git_commit_all(&empty_repo);
         let repo = UrlRepo::new(format!("file://{}", &empty_repo.path().to_string_lossy()));
-        let manager = manager_instance(&data_dir).unwrap();
+        let manager = GitManagerHandler::new();
+        let data_dir = &manager.data_dir;
+        let manager = manager.git_manager().unwrap();
         manager.download_remote_repository(&repo).unwrap();
         let uuid = uuid!("f37915a0-7195-11ed-a1eb-0242ac120010");
         manager.clone_local_by_branch(&repo, "main", uuid).unwrap();
@@ -525,9 +529,6 @@ mod test {
         let commit = git_commit_all(&empty_repo);
         let uuid = uuid!("f37915a0-7195-11ed-a1eb-0242ac120017");
         manager.fetch(&[] as &[&str], &repo).unwrap();
-        println!("commit: {:?}", &commit);
-        println!("dir: {:?}", &_tempdir);
-        println!("empty_repo: {:?}", &empty_repo);
 
         manager.clone_local_by_commit(&repo, &commit, uuid).unwrap();
 
@@ -570,21 +571,19 @@ mod test {
 
     #[test]
     fn new() {
-        let (_tempdir, data_dir) = temp_data_dir();
-        let manager = manager_instance(&data_dir);
-        assert!(manager.is_ok());
+        let manager = GitManagerHandler::new();
+        assert!(manager.git_manager().is_ok());
     }
 
     #[test]
     fn clone_with_valid_url() {
-        let (_tempdir, data_dir) = temp_data_dir();
-        let manager = manager_instance(&data_dir);
+        let manager = GitManagerHandler::new();
+        let manager = manager.git_manager().unwrap();
         let repo = GitHubRepo {
             user: String::from("kittengrid"),
             repo: String::from("deb-s3"),
         };
 
-        let manager = manager.unwrap();
         let result = manager.download_remote_repository(&repo);
         assert!(result.is_ok());
     }
@@ -592,14 +591,13 @@ mod test {
     #[test]
     fn clone_with_valid_url_twice() {
         initialize_logger();
-        let (_tempdir, data_dir) = temp_data_dir();
-        let manager = manager_instance(&data_dir).unwrap();
+        let manager = GitManagerHandler::new();
         let repo = GitHubRepo {
             user: String::from("kittengrid"),
             repo: String::from("deb-s3"),
         };
 
-        let manager = manager;
+        let manager = manager.git_manager().unwrap();
         manager.download_remote_repository(&repo).unwrap();
         assert!(manager.download_remote_repository(&repo).is_ok());
     }
@@ -607,8 +605,10 @@ mod test {
     #[test]
     fn clone_with_garbage_in_destination() {
         initialize_logger();
+        let manager = GitManagerHandler::new();
+        let data_dir = &manager.data_dir;
+        let manager = manager.git_manager().unwrap();
 
-        let (_tempdir, data_dir) = temp_data_dir();
         let target_dir = data_dir
             .repos_path()
             .unwrap()
@@ -618,7 +618,7 @@ mod test {
 
         fs::create_dir_all(&target_dir).unwrap();
         std::fs::File::create(target_dir.join("garbage")).expect("create failed");
-        let manager = manager_instance(&data_dir).unwrap();
+
         let repo = GitHubRepo {
             user: String::from("kittengrid"),
             repo: String::from("deb-s3"),
@@ -629,14 +629,13 @@ mod test {
 
     #[test]
     fn clone_with_invalid_url() {
-        let (_tempdir, data_dir) = temp_data_dir();
-        let manager = manager_instance(&data_dir);
+        let manager = GitManagerHandler::new();
         let repo = GitHubRepo {
-            user: String::from("kittengrid"),
+            user: String::from("kittengrid()"),
             repo: String::from("I_DON_THINK_WE_WILL_EVER_HAVE_THIS_REPO"),
         };
 
-        let manager = manager.unwrap();
+        let manager = manager.git_manager().unwrap();
         assert!(matches!(
             manager.download_remote_repository(&repo).err().unwrap(),
             _git_manager_clone_error
@@ -645,11 +644,12 @@ mod test {
 
     #[test]
     fn clone_url_repo() {
-        let (_tempdir, data_dir) = temp_data_dir();
-        let manager = manager_instance(&data_dir);
         let repo = UrlRepo::new(test_repo("simple-repo"));
 
-        let manager = manager.unwrap();
+        let manager = GitManagerHandler::new();
+        let data_dir = &manager.data_dir;
+        let manager = manager.git_manager().unwrap();
+
         let result = manager.download_remote_repository(&repo);
         assert!(Path::new(
             &data_dir
@@ -666,9 +666,11 @@ mod test {
 
     #[test]
     fn clone_not_default_branch_repo() {
-        let (_tempdir, data_dir) = temp_data_dir();
         let repo = UrlRepo::new(test_repo("simple-repo"));
-        let manager = manager_instance(&data_dir).unwrap();
+        let manager = GitManagerHandler::new();
+        let data_dir = &manager.data_dir;
+        let manager = manager.git_manager().unwrap();
+
         manager.download_remote_repository(&repo).unwrap();
         manager
             .clone_local_by_branch(
@@ -691,10 +693,13 @@ mod test {
     #[test]
     fn clone_local_branch_url_repo() {
         crate::utils::initialize_logger();
-        let (_tempdir, data_dir) = temp_data_dir();
+
         let first_uuid = "f37915a0-7195-11ed-a1eb-0242ac120002";
         let second_uuid = "f37915a0-7195-11ed-a1eb-0242ac120003";
-        let manager = manager_instance(&data_dir).unwrap();
+        let manager = GitManagerHandler::new();
+        let data_dir = &manager.data_dir;
+        let manager = manager.git_manager().unwrap();
+
         let repo = UrlRepo::new(test_repo("simple-repo"));
         manager.download_remote_repository(&repo).unwrap();
 
@@ -743,10 +748,11 @@ mod test {
 
     #[test]
     fn clone_local_commit_url_repo() {
-        let (_tempdir, data_dir) = temp_data_dir();
         let first_uuid = "f37915a0-7195-11ed-a1eb-0242ac120002";
         let second_uuid = "f37915a0-7195-11ed-a1eb-0242ac120003";
-        let manager = manager_instance(&data_dir).unwrap();
+        let manager = GitManagerHandler::new();
+        let data_dir = &manager.data_dir;
+        let manager = manager.git_manager().unwrap();
         let repo = UrlRepo::new(test_repo("simple-repo"));
         manager.download_remote_repository(&repo).unwrap();
         manager.download_remote_repository(&repo).unwrap();
@@ -803,8 +809,22 @@ mod test {
         assert_eq!(first_metadata.ino(), second_metadata.ino());
     }
 
-    fn manager_instance(data_dir: &DataDir) -> Result<GitManager, GitManagerInitError> {
-        GitManager::new(data_dir)
+    struct GitManagerHandler {
+        pub temp_dir: TempDir,
+        pub data_dir: DataDir,
+    }
+
+    impl GitManagerHandler {
+        pub fn new() -> Self {
+            let temp_dir = tempdir().unwrap();
+            let mut data_dir = DataDir::new(temp_dir.path().to_path_buf());
+            data_dir.init();
+            Self { temp_dir, data_dir }
+        }
+
+        pub fn git_manager<'a>(&'a self) -> Result<GitManager<'a>, GitManagerInitError> {
+            Ok(GitManager::new(&self.data_dir)?)
+        }
     }
 
     fn test_repo(repo: &str) -> String {

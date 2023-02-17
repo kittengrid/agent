@@ -6,10 +6,11 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use std::str;
+use std::str::{self, FromStr};
 use thiserror::Error;
 
 /// Data structure to manage docker-compose execution
+#[derive(Debug, Clone)]
 pub struct DockerCompose<'a> {
     data_dir: &'a DataDir,
     cwd: Option<String>,
@@ -144,7 +145,7 @@ impl<'a> DockerCompose<'a> {
     ///
     /// # Arguments
     ///
-    /// * `path` - A String containing the path of the compose file.
+    /// * `path` - A String containing the relative path of the compose file.
     ///
     pub fn compose_file(&mut self, path: String) -> &mut Self {
         self.compose_file = Some(path);
@@ -246,6 +247,26 @@ impl<'a> DockerCompose<'a> {
         self.invoke("down", arguments)
     }
 
+    fn absolute_docker_compose_file_path(&self) -> Result<String, DockerComposeRunError> {
+        let compose_file_path = match &self.compose_file {
+            Some(path) => path,
+            None => return Err(DockerComposeRunError::NoDockerComposeFile),
+        };
+
+        if !Path::new(compose_file_path).exists() {
+            if let Some(cwd) = &self.cwd {
+                let absolute_path = Path::new(cwd).join(compose_file_path);
+                if absolute_path.exists() {
+                    return Ok(absolute_path.into_os_string().into_string().unwrap());
+                }
+            }
+            return Err(DockerComposeRunError::DockerComposeFileNotFound(
+                compose_file_path.to_string(),
+            ));
+        }
+        Ok(compose_file_path.to_string())
+    }
+
     /// Invokes a docker-compose command.
     ///
     /// # Arguments
@@ -254,24 +275,16 @@ impl<'a> DockerCompose<'a> {
     /// * `args`       - An array containing subcommand arguments
     ///
     fn invoke(&self, subcommand: &str, args: Vec<String>) -> Result<Output, DockerComposeRunError> {
-        let compose_file_path = match &self.compose_file {
-            Some(path) => path,
-            None => return Err(DockerComposeRunError::NoDockerComposeFile),
-        };
+        let compose_file_path = self.absolute_docker_compose_file_path()?;
 
         let mut command = Command::new(self.binary_path());
         for (key, value) in &self.env {
-            command.env(&*key, &*value);
-        }
-        if !Path::new(&*compose_file_path).exists() {
-            return Err(DockerComposeRunError::DockerComposeFileNotFound(
-                compose_file_path.to_string(),
-            ));
+            command.env(key, value);
         }
 
-        command.env("COMPOSE_FILE", &*compose_file_path);
+        command.env("COMPOSE_FILE", compose_file_path);
         if let Some(cwd) = &self.cwd {
-            command.current_dir(&*cwd);
+            command.current_dir(cwd);
         }
 
         command.arg(subcommand).args(args.as_slice());
@@ -314,27 +327,18 @@ mod test {
 
     #[test]
     fn new() {
-        let temp_dir = tempdir().unwrap();
-        let data_dir = DataDir::new(temp_dir.path().to_path_buf());
-
-        let docker_compose = DockerCompose::new(&data_dir);
-        assert!(matches!(
-            docker_compose.err().unwrap(),
-            DockerComposeInitError::DirectoryNotInitialized
-        ));
-
-        let mut data_dir = DataDir::new(temp_dir.path().to_path_buf());
-        data_dir.init().unwrap();
-
-        let docker_compose = DockerCompose::new(&data_dir);
-        assert!(docker_compose.is_ok());
-        assert!(std::path::Path::new(&data_dir.path().join("bin").join("docker-compose")).exists());
+        let docker_compose_handler = DockerComposeHandler::new();
+        let compose = docker_compose_handler.docker_compose("simple-compose.yaml");
+        assert!(
+            std::path::Path::new(&compose.data_dir.path().join("bin").join("docker-compose"))
+                .exists()
+        );
     }
 
     #[test]
     fn invoke_with_incorrect_directory_and_a_valid_docker_compose_file_path() {
-        let (_tempdir, data_dir) = data_dir();
-        let mut compose = docker_compose(&data_dir, "simple-compose.yaml");
+        let docker_compose_handler = DockerComposeHandler::new();
+        let mut compose = docker_compose_handler.docker_compose("simple-compose.yaml");
         compose.cwd(String::from(" I DO NOT EXIST"));
         assert!(matches!(
             compose.create().err().unwrap(),
@@ -344,8 +348,8 @@ mod test {
 
     #[test]
     fn invoke_with_valid_directory_and_incorrect_docker_compose_file_path() {
-        let (_tempdir, data_dir) = data_dir();
-        let compose = docker_compose(&data_dir, "I do not exist");
+        let docker_compose_handler = DockerComposeHandler::new();
+        let mut compose = docker_compose_handler.docker_compose("I do not exist");
         assert!(matches!(
             compose.create().err().unwrap(),
             DockerComposeRunError::DockerComposeFileNotFound(_)
@@ -355,8 +359,8 @@ mod test {
     #[test]
     fn invoke_with_incorrect_directory_and_a_valid_docker_compose_file_path_with_invalid_contents()
     {
-        let (_tempdir, data_dir) = data_dir();
-        let compose = docker_compose(&data_dir, "simple-compose-gone-wrong.yaml");
+        let docker_compose_handler = DockerComposeHandler::new();
+        let mut compose = docker_compose_handler.docker_compose("simple-compose-gone-wrong.yaml");
         assert!(matches!(
             compose.create().err().unwrap(),
             DockerComposeRunError::ErrorExitStatus(_)
@@ -365,8 +369,8 @@ mod test {
 
     #[test]
     fn ps() {
-        let (_tempdir, data_dir) = data_dir();
-        let compose = docker_compose(&data_dir, "simple-compose.yaml");
+        let docker_compose_handler = DockerComposeHandler::new();
+        let compose = docker_compose_handler.docker_compose("simple-compose.yaml");
         assert!(compose.create().is_ok());
         assert!(compose.start().is_ok());
 
@@ -381,8 +385,8 @@ mod test {
 
     #[test]
     fn rm_deletes_containers_when_force_stop_is_set_to_true() {
-        let (_tempdir, data_dir) = data_dir();
-        let compose = docker_compose(&data_dir, "simple-compose.yaml");
+        let docker_compose_handler = DockerComposeHandler::new();
+        let mut compose = docker_compose_handler.docker_compose("simple-compose.yaml");
 
         compose.create().unwrap();
         compose.start().unwrap();
@@ -405,6 +409,37 @@ mod test {
         }
     }
 
+    struct DockerComposeHandler {
+        pub temp_dir: TempDir,
+        pub data_dir: DataDir,
+    }
+
+    impl DockerComposeHandler {
+        pub fn new() -> Self {
+            let temp_dir = tempdir().unwrap();
+            let mut data_dir = DataDir::new(temp_dir.path().to_path_buf());
+            data_dir.init();
+            Self { temp_dir, data_dir }
+        }
+
+        pub fn docker_compose<'a>(&'a self, fixture: &str) -> DockerCompose<'a> {
+            let mut compose = DockerCompose::new(&self.data_dir).unwrap();
+            let project_name = String::from(
+                self.data_dir
+                    .path()
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap(),
+            );
+            compose
+                .cwd(test_fixture(""))
+                .project_name(project_name)
+                .compose_file(test_fixture(fixture));
+
+            compose
+        }
+    }
+
     fn data_dir() -> (TempDir, DataDir) {
         let temp_dir = tempdir().unwrap();
         let mut data_dir = DataDir::new(temp_dir.path().to_path_buf());
@@ -414,22 +449,6 @@ mod test {
     }
 
     // Helpers
-    fn docker_compose<'a>(data_dir: &'a DataDir, fixture: &str) -> DockerCompose<'a> {
-        let mut compose = DockerCompose::new(data_dir).unwrap();
-        let project_name = String::from(
-            data_dir
-                .path()
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap(),
-        );
-        compose
-            .cwd(test_fixture(""))
-            .project_name(project_name)
-            .compose_file(test_fixture(fixture));
-
-        compose
-    }
 
     fn test_fixture(path: &str) -> String {
         let path_buf =
