@@ -302,12 +302,6 @@ impl<'a> DockerCompose<'a> {
         }
     }
 
-    // For internal use, cleans up the network associated with this
-    // docker compose.
-    fn clean(&mut self) {
-        self.down(true, Some(String::from("all")), true);
-    }
-
     fn output_to_string(output: Output) -> String {
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -402,15 +396,17 @@ mod test {
         assert!(output.first().is_none());
     }
 
+    // Helpers
+
     // Delete Docker stuff
     impl<'a> Drop for DockerCompose<'a> {
         fn drop(&mut self) {
-            self.clean();
+            self.down(true, Some(String::from("all")), true).unwrap();
         }
     }
 
     struct DockerComposeHandler {
-        pub temp_dir: TempDir,
+        pub _temp_dir: TempDir,
         pub data_dir: DataDir,
     }
 
@@ -418,8 +414,11 @@ mod test {
         pub fn new() -> Self {
             let temp_dir = tempdir().unwrap();
             let mut data_dir = DataDir::new(temp_dir.path().to_path_buf());
-            data_dir.init();
-            Self { temp_dir, data_dir }
+            data_dir.init().unwrap();
+            Self {
+                _temp_dir: temp_dir,
+                data_dir,
+            }
         }
 
         pub fn docker_compose<'a>(&'a self, fixture: &str) -> DockerCompose<'a> {
@@ -439,16 +438,6 @@ mod test {
             compose
         }
     }
-
-    fn data_dir() -> (TempDir, DataDir) {
-        let temp_dir = tempdir().unwrap();
-        let mut data_dir = DataDir::new(temp_dir.path().to_path_buf());
-        data_dir.init().unwrap();
-
-        (temp_dir, data_dir)
-    }
-
-    // Helpers
 
     fn test_fixture(path: &str) -> String {
         let path_buf =

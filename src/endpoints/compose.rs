@@ -90,15 +90,9 @@ pub async fn new(
 		    ctx.repo_reference(),
 		    ctx.paths()
 		);
-            let git_manager = get_git_manager();
             let data_dir = data_dir::get_data_dir();
 
-            let fetch = git_manager.download_remote_repository(&repo);
-            if fetch.is_err() {
-                ctx.set_status(compose::Status::ErrorFetchingRepo(fetch.err().unwrap()));
-            }
-            match get_git_manager().clone_local_by_reference(&repo.clone(), &reference.clone(), id)
-            {
+            match get_git_manager().clone_local(&repo, &reference.clone(), id) {
                 Ok(_) => ctx.set_status(compose::Status::RepoReady),
                 Err(err) => {
                     ctx.set_status(compose::Status::ErrorFetchingRepo(err));
@@ -146,7 +140,7 @@ pub async fn new(
         inner: rocket::response::status::Accepted(Some(format!("{{\"id\":\"{}\"}}", id))),
         location: Header::new(
             String::from("Location"),
-            format!("{}{},status", request_path.path, id),
+            format!("{}/{}/status", request_path.path, id),
         ),
     }
 }
@@ -302,13 +296,12 @@ mod test {
     use crate::rocket;
     use rocket::http::{ContentType, Status};
     use rocket::local::blocking::Client;
-    use std::{thread, time};
 
     fn simple_new_compose_request_data(branch: String) -> String {
         serde_json::to_string(&NewComposeRequest {
             github_user: "docker",
             github_repo: "awesome-compose",
-            path: "plex/compose.yaml",
+            path: "traefik-golang/compose.yaml",
             reference: crate::git_manager::GitReference::Branch(branch),
         })
         .unwrap()
@@ -326,7 +319,8 @@ mod test {
             .dispatch();
         let location = response.headers().get_one("Location").unwrap();
         assert_ne!(location, String::from(""));
-        assert!(location.to_string().starts_with("/compose/status/"));
+        println!("{}", location.to_string());
+        assert!(location.to_string().starts_with("/compose/"));
         assert_eq!(response.content_type(), Some(ContentType::JSON));
         warn!("{}", response.into_string().unwrap());
     }
@@ -370,10 +364,8 @@ mod test {
         let response = client.get(location).dispatch();
         assert_eq!(response.status(), Status::Ok);
         let mut status = response.into_json::<ComposeStatus>().unwrap();
-        let one_sec = time::Duration::from_secs(1);
         loop {
-            thread::sleep(one_sec);
-            println!("status {:?}", status);
+            crate::test_utils::sleep(1);
             match status {
                 ComposeStatus::FetchingRepo => {
                     status = client
@@ -385,8 +377,6 @@ mod test {
                 _ => break,
             }
         }
-        println!("{:?}", status);
-        assert!(matches!(status, ComposeStatus::RepoReady { .. }));
         let response = client
             .post(uri!(compose::new))
             .body(&simple_new_compose_request_data(String::from(
@@ -397,22 +387,21 @@ mod test {
         let response = client.get(location).dispatch();
         assert_eq!(response.status(), Status::Ok);
         let mut status = response.into_json::<ComposeStatus>().unwrap();
-        let one_sec = time::Duration::from_secs(1);
         loop {
-            thread::sleep(one_sec);
+            crate::test_utils::sleep(1);
             match status {
-                ComposeStatus::FetchingRepo => {
+                ComposeStatus::ComposeStarted => break,
+                _ => {
                     status = client
                         .get(location)
                         .dispatch()
                         .into_json::<ComposeStatus>()
-                        .unwrap();
+                        .unwrap()
                 }
-                _ => break,
             }
         }
         debug!("{:?}", status);
-        assert!(matches!(status, ComposeStatus::RepoReady { .. }));
+        assert!(matches!(status, ComposeStatus::ComposeStarted { .. }));
     }
 }
 //     #[test]

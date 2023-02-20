@@ -5,6 +5,7 @@ use std::process::{Command, Output};
 use std::{thread, time};
 use tempfile::{tempdir, TempDir};
 
+#[allow(dead_code)]
 pub fn temp_data_dir() -> (TempDir, DataDir) {
     let directory = tempdir().unwrap();
     let mut data_dir = DataDir::new(directory.path().to_path_buf());
@@ -91,20 +92,52 @@ pub fn git_commit_all(temp_dir: &TempDir) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_string()
 }
 
-pub fn git_push(temp_dir: &TempDir, remote: &str, branch: &str) -> String {
+pub fn git_clone(source_repo: &str) -> TempDir {
+    let target_dir: TempDir = tempdir().unwrap();
+    let path = target_dir.path().to_str().unwrap();
+    let output = Command::new("git")
+        .arg("clone")
+        .arg(source_repo)
+        .arg(path)
+        .output()
+        .expect("git clone ok");
+    debug_output(&output);
+    target_dir
+}
+
+pub fn git_commit_amend_and_push(temp_dir: &TempDir) {
     let path = temp_dir.path().to_str().unwrap();
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .arg("add")
+        .arg(".")
+        .output()
+        .expect("git add ok");
+    debug_output(&output);
+
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .arg("commit")
+        .arg("--amend")
+        .arg("--no-edit")
+        .output()
+        .expect("git commit ok");
+    debug_output(&output);
 
     let output = Command::new("git")
         .arg("-C")
         .arg(path)
         .arg("push")
-        .arg(remote)
-        .arg(branch)
+        .arg("origin")
+        .arg("-f")
         .output()
-        .expect("git add ok");
-    String::from_utf8_lossy(&output.stdout).trim().to_string()
+        .expect("git force push ok");
+    debug_output(&output);
 }
 
+#[allow(dead_code)]
 pub fn sleep(secs: u64) {
     let secs = time::Duration::from_secs(secs);
     thread::sleep(secs);

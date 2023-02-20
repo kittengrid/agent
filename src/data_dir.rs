@@ -21,10 +21,11 @@ pub enum DataDirError {
 }
 
 /// Data structure to manage the state directory
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct DataDir {
     path: PathBuf,
     initialized: bool,
+    temp_dir: Option<tempfile::TempDir>,
 }
 
 impl DataDir {
@@ -46,6 +47,7 @@ impl DataDir {
         Self {
             path,
             initialized: false,
+            temp_dir: None,
         }
     }
 
@@ -72,7 +74,11 @@ impl DataDir {
                 let temp_dir = tempdir().unwrap();
 
                 self.path = PathBuf::from(temp_dir.path());
-                build_directory_structure(&self.path)
+
+                build_directory_structure(&self.path)?;
+                self.initialized = true;
+                self.temp_dir = Some(temp_dir);
+                Ok(())
             }
             Err(error) => Err(error),
             Ok(()) => {

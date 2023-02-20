@@ -7,7 +7,7 @@ use once_cell::sync::Lazy;
 static CONFIG: Lazy<Config> = Lazy::new(|| {
     if cfg!(test) {
         Config {
-            log_level: LevelFilter::Debug,
+            log_level: LevelFilter::Error,
             work_directory: String::from("/tmp/test"),
         }
     } else {
