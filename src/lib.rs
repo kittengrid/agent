@@ -1,11 +1,6 @@
-// Rocket
-#[macro_use]
-extern crate rocket;
-
 use std::collections::HashMap;
 use uuid::Uuid;
 
-//Rocket
 pub mod compose;
 mod config;
 pub mod data_dir;
@@ -13,23 +8,51 @@ pub mod docker_compose;
 mod endpoints;
 pub mod git_manager;
 mod utils;
+use axum::{
+    http::StatusCode,
+    response::IntoResponse,
+    routing::{get, post},
+    Json, Router,
+};
+use log::debug;
+use once_cell::sync::Lazy;
+use std::net::SocketAddr;
 
 extern crate log;
 use std::sync::{Arc, RwLock};
 pub type AgentState<'a> = Arc<RwLock<HashMap<Uuid, Arc<compose::Context<'a>>>>>;
+static AGENT_STATE: Lazy<AgentState> =
+    Lazy::new(|| Arc::new(RwLock::new(HashMap::<Uuid, Arc<compose::Context>>::new())));
 
-pub fn rocket() -> rocket::Rocket<rocket::Build> {
+/// Returns the agent state
+pub fn agent_state() -> &'static AgentState<'static> {
+    &AGENT_STATE
+}
+
+pub async fn launch() {
     utils::initialize_logger();
 
-    let state: AgentState = Arc::new(RwLock::new(HashMap::<Uuid, Arc<compose::Context>>::new()));
-    rocket::build()
-        .manage(state)
-        .mount("/", routes![endpoints::compose::new])
-        .mount("/", routes![endpoints::compose::status])
-        .mount("/", routes![endpoints::compose::stop])
-        .mount("/", routes![endpoints::compose::start])
-        .mount("/", routes![endpoints::compose::show])
-        .mount("/", routes![endpoints::sys::hello])
+    // build our application with a router
+    let app = Router::new()
+        .route("/sys/hello", get(endpoints::sys::hello))
+        .route("/compose", post(endpoints::compose::new));
+
+    // run our app with hyper
+    // `axum::Server` is a re-export of `hyper::Server`
+    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+    debug!("listening on {}", addr);
+    axum::Server::bind(&addr)
+        .serve(app.into_make_service())
+        .await
+        .unwrap();
+    // rocket::build()
+    //     .manage(state)
+    //     .mount("/", routes![endpoints::compose::new])
+    //     .mount("/", routes![endpoints::compose::status])
+    //     .mount("/", routes![endpoints::compose::stop])
+    //     .mount("/", routes![endpoints::compose::start])
+    //     .mount("/", routes![endpoints::compose::show])
+    //     .mount("/", routes![endpoints::sys::hello])
 }
 
 #[cfg(test)]

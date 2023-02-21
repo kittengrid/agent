@@ -1,39 +1,19 @@
+use crate::agent_state;
 use crate::docker_compose::DockerCompose;
 use crate::git_manager::{get_git_manager, GitHubRepo, GitReference};
 use crate::{compose, data_dir};
-use rocket::http::{Header, Status};
-use rocket::serde::{json::Json, Deserialize, Serialize};
+use axum::{
+    http::{header, StatusCode},
+    response::IntoResponse,
+    Json,
+};
+use log::info;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Arc;
 use tokio;
 
-use rocket::Responder;
-use rocket::State;
-
 use uuid::Uuid;
-
-#[derive(Responder)]
-#[response(status = 202, content_type = "json")]
-pub struct AcceptResponder {
-    inner: rocket::response::status::Accepted<String>,
-    location: Header<'static>,
-}
-
-pub struct PathCatcher {
-    path: String,
-}
-use rocket::request::{self, FromRequest, Request};
-
-#[rocket::async_trait]
-impl<'r> FromRequest<'r> for PathCatcher {
-    type Error = std::fmt::Error;
-    async fn from_request(req: &'r Request<'_>) -> request::Outcome<Self, Self::Error> {
-        let path = req.uri().path();
-        request::Outcome::Success(PathCatcher {
-            path: path.to_string(),
-        })
-    }
-}
 
 // POST /compose/
 //
@@ -48,25 +28,19 @@ impl<'r> FromRequest<'r> for PathCatcher {
 
 // Struct for Request data
 
-#[derive(Deserialize, Serialize)]
-pub struct NewComposeRequest<'r> {
-    github_user: &'r str,
-    github_repo: &'r str,
-    path: &'r str,
+#[derive(Deserialize)]
+pub struct NewComposeRequest {
+    github_user: String,
+    github_repo: String,
+    path: String,
     reference: GitReference,
 }
 
-#[post("/compose", data = "<request_data>")]
-// TODO: meaningful errors (What the heck check https://github.com/SergioBenitez/Rocket/issues/749)
-pub async fn new(
-    agent_state: &'_ State<crate::AgentState<'_>>,
-    request_path: PathCatcher,
-    request_data: Json<NewComposeRequest<'_>>,
-) -> AcceptResponder {
+pub async fn new(Json(payload): Json<NewComposeRequest>) -> impl IntoResponse {
     let id = Uuid::new_v4();
-    let repo = GitHubRepo::new(request_data.github_user, request_data.github_repo);
-    let reference = request_data.reference.clone();
-    let path = String::from(request_data.path);
+    let repo = GitHubRepo::new(&payload.github_user, &payload.github_repo);
+    let reference = payload.reference.clone();
+    let path = payload.path;
 
     let ctx = Arc::new(compose::Context::new(
         compose::Status::FetchingRepo,
@@ -77,7 +51,7 @@ pub async fn new(
 
     {
         let ctx = ctx.clone();
-        let mut hash = agent_state.write().unwrap();
+        let mut hash = agent_state().write().unwrap();
         hash.insert(id, ctx);
     }
 
@@ -136,177 +110,175 @@ pub async fn new(
 
     ctx.set_handle(handle);
 
-    AcceptResponder {
-        inner: rocket::response::status::Accepted(Some(format!("{{\"id\":\"{}\"}}", id))),
-        location: Header::new(
-            String::from("Location"),
-            format!("{}/{}/status", request_path.path, id),
-        ),
-    }
+    (
+        StatusCode::ACCEPTED,
+        [(header::CONTENT_TYPE, "application/json")],
+        Json(format!("{{\"id\":\"{}\"}}", id)),
+    )
 }
 
 // GET /compose/%{id}/status
 // Returns Status of the component
 //
 
-#[get("/compose/<id>/status")]
-pub fn status(
-    agent_state: &State<crate::AgentState>,
-    id: String,
-) -> Result<Json<compose::Status>, rocket::response::status::Custom<&'static str>> {
-    let id = match Uuid::parse_str(&id) {
-        Ok(id) => id,
-        Err(_err) => {
-            return Err(rocket::response::status::Custom(
-                Status::BadRequest,
-                "Malformed id",
-            ))
-        }
-    };
+// #[get("/compose/<id>/status")]
+// pub fn status(
+//     agent_state: &State<crate::AgentState>,
+//     id: String,
+// ) -> Result<Json<compose::Status>, rocket::response::status::Custom<&'static str>> {
+//     let id = match Uuid::parse_str(&id) {
+//         Ok(id) => id,
+//         Err(_err) => {
+//             return Err(rocket::response::status::Custom(
+//                 Status::BadRequest,
+//                 "Malformed id",
+//             ))
+//         }
+//     };
 
-    {
-        let hash = agent_state.read().unwrap();
-        match hash.get(&id) {
-            Some(ctx) => Ok(Json(ctx.status())),
-            None => Err(rocket::response::status::Custom(
-                Status::NotFound,
-                "Not found",
-            )),
-        }
-    }
-}
+//     {
+//         let hash = agent_state.read().unwrap();
+//         match hash.get(&id) {
+//             Some(ctx) => Ok(Json(ctx.status())),
+//             None => Err(rocket::response::status::Custom(
+//                 Status::NotFound,
+//                 "Not found",
+//             )),
+//         }
+//     }
+// }
 
-// POST /compose/%{id}/stop
-// Stops the docker-compose run.
-//
+// // POST /compose/%{id}/stop
+// // Stops the docker-compose run.
+// //
 
-#[post("/compose/<id>/stop")]
-pub fn stop(
-    agent_state: &State<crate::AgentState>,
-    id: String,
-) -> Result<Json<compose::Status>, rocket::response::status::Custom<&'static str>> {
-    let id = match Uuid::parse_str(&id) {
-        Ok(id) => id,
-        Err(_err) => {
-            return Err(rocket::response::status::Custom(
-                Status::BadRequest,
-                "Malformed id",
-            ))
-        }
-    };
+// #[post("/compose/<id>/stop")]
+// pub fn stop(
+//     agent_state: &State<crate::AgentState>,
+//     id: String,
+// ) -> Result<Json<compose::Status>, rocket::response::status::Custom<&'static str>> {
+//     let id = match Uuid::parse_str(&id) {
+//         Ok(id) => id,
+//         Err(_err) => {
+//             return Err(rocket::response::status::Custom(
+//                 Status::BadRequest,
+//                 "Malformed id",
+//             ))
+//         }
+//     };
 
-    {
-        let hash = agent_state.read().unwrap();
-        match hash.get(&id) {
-            Some(ctx) => {
-                ctx.set_status(compose::Status::ComposeStopping);
-                match ctx.docker_compose() {
-                    Some(docker_compose) => match docker_compose.stop() {
-                        Ok(_) => {
-                            ctx.set_status(compose::Status::ComposeStopped);
-                            Ok(Json(ctx.status()))
-                        }
-                        Err(err) => {
-                            ctx.set_status(compose::Status::ComposeStoppingError(err));
-                            Err(rocket::response::status::Custom(
-                                Status::InternalServerError,
-                                "ERROR Stopping",
-                            ))
-                        }
-                    },
-                    None => Err(rocket::response::status::Custom(
-                        Status::InternalServerError,
-                        "Docker compose fail",
-                    )),
-                }
-            }
-            None => Err(rocket::response::status::Custom(
-                Status::NotFound,
-                "Not found",
-            )),
-        }
-    }
-}
+//     {
+//         let hash = agent_state.read().unwrap();
+//         match hash.get(&id) {
+//             Some(ctx) => {
+//                 ctx.set_status(compose::Status::ComposeStopping);
+//                 match ctx.docker_compose() {
+//                     Some(docker_compose) => match docker_compose.stop() {
+//                         Ok(_) => {
+//                             ctx.set_status(compose::Status::ComposeStopped);
+//                             Ok(Json(ctx.status()))
+//                         }
+//                         Err(err) => {
+//                             ctx.set_status(compose::Status::ComposeStoppingError(err));
+//                             Err(rocket::response::status::Custom(
+//                                 Status::InternalServerError,
+//                                 "ERROR Stopping",
+//                             ))
+//                         }
+//                     },
+//                     None => Err(rocket::response::status::Custom(
+//                         Status::InternalServerError,
+//                         "Docker compose fail",
+//                     )),
+//                 }
+//             }
+//             None => Err(rocket::response::status::Custom(
+//                 Status::NotFound,
+//                 "Not found",
+//             )),
+//         }
+//     }
+// }
 
-// POST /compose/%{id}/start
-// Starts the docker-compose run.
-//
+// // POST /compose/%{id}/start
+// // Starts the docker-compose run.
+// //
 
-#[get("/compose/<id>/start")]
-pub fn start(
-    agent_state: &State<crate::AgentState>,
-    id: String,
-) -> Result<Json<compose::Status>, rocket::response::status::Custom<&'static str>> {
-    let id = match Uuid::parse_str(&id) {
-        Ok(id) => id,
-        Err(_err) => {
-            return Err(rocket::response::status::Custom(
-                Status::BadRequest,
-                "Malformed id",
-            ))
-        }
-    };
+// #[get("/compose/<id>/start")]
+// pub fn start(
+//     agent_state: &State<crate::AgentState>,
+//     id: String,
+// ) -> Result<Json<compose::Status>, rocket::response::status::Custom<&'static str>> {
+//     let id = match Uuid::parse_str(&id) {
+//         Ok(id) => id,
+//         Err(_err) => {
+//             return Err(rocket::response::status::Custom(
+//                 Status::BadRequest,
+//                 "Malformed id",
+//             ))
+//         }
+//     };
 
-    {
-        let hash = agent_state.read().unwrap();
-        match hash.get(&id) {
-            Some(ctx) => Ok(Json(ctx.status())),
-            None => Err(rocket::response::status::Custom(
-                Status::NotFound,
-                "Not found",
-            )),
-        }
-    }
-}
+//     {
+//         let hash = agent_state.read().unwrap();
+//         match hash.get(&id) {
+//             Some(ctx) => Ok(Json(ctx.status())),
+//             None => Err(rocket::response::status::Custom(
+//                 Status::NotFound,
+//                 "Not found",
+//             )),
+//         }
+//     }
+// }
 
-// GET /compose/%{id}
-// Returns the component
-#[get("/compose/<id>")]
-pub fn show(
-    agent_state: &State<crate::AgentState>,
-    id: String,
-) -> Result<Json<compose::Status>, rocket::response::status::Custom<&'static str>> {
-    let id = match Uuid::parse_str(&id) {
-        Ok(id) => id,
-        Err(_err) => {
-            return Err(rocket::response::status::Custom(
-                Status::BadRequest,
-                "Malformed id",
-            ))
-        }
-    };
+// // GET /compose/%{id}
+// // Returns the component
+// #[get("/compose/<id>")]
+// pub fn show(
+//     agent_state: &State<crate::AgentState>,
+//     id: String,
+// ) -> Result<Json<compose::Status>, rocket::response::status::Custom<&'static str>> {
+//     let id = match Uuid::parse_str(&id) {
+//         Ok(id) => id,
+//         Err(_err) => {
+//             return Err(rocket::response::status::Custom(
+//                 Status::BadRequest,
+//                 "Malformed id",
+//             ))
+//         }
+//     };
 
-    {
-        let hash = agent_state.read().unwrap();
-        match hash.get(&id) {
-            Some(ctx) => Ok(Json(ctx.status())),
-            None => Err(rocket::response::status::Custom(
-                Status::NotFound,
-                "Not found",
-            )),
-        }
-    }
-}
+//     {
+//         let hash = agent_state.read().unwrap();
+//         match hash.get(&id) {
+//             Some(ctx) => Ok(Json(ctx.status())),
+//             None => Err(rocket::response::status::Custom(
+//                 Status::NotFound,
+//                 "Not found",
+//             )),
+//         }
+//     }
+// }
 
-#[cfg(test)]
-mod test {
+// #[cfg(test)]
+// mod test {
 
-    //     use crate::compose::Status as ComposeStatus;
-    //     use crate::endpoints::compose::{self, NewComposeRequest};
-    //     use crate::rocket;
-    //     use rocket::http::{ContentType, Status};
-    //     use rocket::local::blocking::Client;
+//     use crate::compose::Status as ComposeStatus;
+//     use crate::endpoints::compose::{self, NewComposeRequest};
+//     use crate::rocket;
+//     use rocket::http::{ContentType, Status};
+//     use rocket::local::blocking::Client;
 
-    //     fn simple_new_compose_request_data(branch: String) -> String {
-    //         serde_json::to_string(&NewComposeRequest {
-    //             github_user: "docker",
-    //             github_repo: "awesome-compose",
-    //             path: "traefik-golang/compose.yaml",
-    //             reference: crate::git_manager::GitReference::Branch(branch),
-    //         })
-    //         .unwrap()
-    //     }
-}
+//     fn simple_new_compose_request_data(branch: String) -> String {
+//         serde_json::to_string(&NewComposeRequest {
+//             github_user: "docker",
+//             github_repo: "awesome-compose",
+//             path: "traefik-golang/compose.yaml",
+//             reference: crate::git_manager::GitReference::Branch(branch),
+//         })
+//         .unwrap()
+//     }
+
 //     #[test]
 //     fn new() {
 //         crate::utils::initialize_logger();

@@ -28,7 +28,7 @@ struct InnerContext<'a> {
     pub repo: GitHubRepo,
     pub repo_reference: GitReference,
     pub paths: Vec<String>,
-    pub handle: Option<rocket::tokio::task::JoinHandle<()>>,
+    pub handle: Option<tokio::task::JoinHandle<()>>,
     pub docker_compose: Option<DockerCompose<'a>>,
     id: Uuid,
 }
@@ -89,7 +89,7 @@ impl<'a> Context<'a> {
         self.inner.write().unwrap().status = status;
     }
 
-    pub fn set_handle(&self, handle: rocket::tokio::task::JoinHandle<()>) {
+    pub fn set_handle(&self, handle: tokio::task::JoinHandle<()>) {
         self.inner.write().unwrap().handle = Some(handle);
     }
 

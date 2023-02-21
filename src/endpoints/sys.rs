@@ -1,9 +1,8 @@
 // GET /sys/hello
 //
 // Description: Returns the cutiest Http response
-#[get("/sys/hello")]
-pub fn hello() -> String {
-    String::from("kitty")
+pub async fn hello() -> &'static str {
+    "kitty"
 }
 
 #[cfg(test)]

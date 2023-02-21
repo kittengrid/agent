@@ -1,7 +1,3 @@
-// Rocket
-#[macro_use]
-extern crate rocket;
-
 // #[get("/fetch/<id>")]
 // fn fetch(id: &str, state: &State<ComposeState>) -> String {
 //     let data = state.data.lock().expect("lock shared data");
@@ -28,7 +24,7 @@ extern crate rocket;
 // GET /compose/%{id}
 // Returns the component
 
-#[launch]
-fn rocket_launch() -> _ {
-    lib::rocket()
+#[tokio::main]
+async fn main() {
+    lib::launch().await;
 }
