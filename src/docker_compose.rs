@@ -77,9 +77,11 @@ impl<'a> DockerCompose<'a> {
     /// # Examples
     ///
     /// ```
+    /// # use lib::*;
     /// use data_dir::DataDir;
-    /// let data_dir = DataDir::new("/var/lib/kittengrid-agent");
-    /// let docker_compose = DockerCompose::new(data_dir);
+    /// use docker_compose::DockerCompose;
+    /// let data_dir = DataDir::new("/var/lib/kittengrid-agent".into());
+    /// let docker_compose = DockerCompose::new(&data_dir);
     /// ```
     ///
     pub fn new(data_dir: &'a DataDir) -> Result<Self, DockerComposeInitError> {
@@ -401,7 +403,9 @@ mod test {
     // Delete Docker stuff
     impl<'a> Drop for DockerCompose<'a> {
         fn drop(&mut self) {
-            self.down(true, Some(String::from("all")), true).unwrap();
+            if self.down(true, Some(String::from("all")), true).is_err() {
+                debug!("Could not properly drop {:?}", self);
+            }
         }
     }
 
