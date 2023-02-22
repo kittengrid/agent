@@ -683,6 +683,7 @@ dependencies = [
  "compose_rust",
  "env_logger",
  "git2",
+ "hyper",
  "log",
  "once_cell",
  "serde",

@@ -8,7 +8,7 @@ use axum::{
     Json,
 };
 use log::info;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::path::Path;
 use std::sync::Arc;
 use tokio;

@@ -523,10 +523,10 @@ mod test {
     use super::*;
     use crate::test_utils::{self, git_commit_all};
     use crate::utils::initialize_logger;
-    use rocket::tokio;
     use std::fs::File;
     use std::os::unix::fs::MetadataExt;
     use tempfile::{tempdir, TempDir};
+    use tokio;
     use uuid::uuid;
 
     #[test]

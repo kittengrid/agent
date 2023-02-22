@@ -9,10 +9,8 @@ mod endpoints;
 pub mod git_manager;
 mod utils;
 use axum::{
-    http::StatusCode,
-    response::IntoResponse,
     routing::{get, post},
-    Json, Router,
+    Router,
 };
 use log::debug;
 use once_cell::sync::Lazy;

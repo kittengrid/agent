@@ -1,5 +1,6 @@
 #[cfg(test)]
 use crate::data_dir::DataDir;
+use log::debug;
 
 use std::process::{Command, Output};
 use std::{thread, time};
