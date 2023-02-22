@@ -9,7 +9,7 @@ use uuid::Uuid;
 pub mod compose;
 mod config;
 pub mod data_dir;
-mod docker_compose;
+pub mod docker_compose;
 mod endpoints;
 pub mod git_manager;
 mod utils;

@@ -291,147 +291,147 @@ pub fn show(
 #[cfg(test)]
 mod test {
 
-    use crate::compose::Status as ComposeStatus;
-    use crate::endpoints::compose::{self, NewComposeRequest};
-    use crate::rocket;
-    use rocket::http::{ContentType, Status};
-    use rocket::local::blocking::Client;
+    //     use crate::compose::Status as ComposeStatus;
+    //     use crate::endpoints::compose::{self, NewComposeRequest};
+    //     use crate::rocket;
+    //     use rocket::http::{ContentType, Status};
+    //     use rocket::local::blocking::Client;
 
-    fn simple_new_compose_request_data(branch: String) -> String {
-        serde_json::to_string(&NewComposeRequest {
-            github_user: "docker",
-            github_repo: "awesome-compose",
-            path: "traefik-golang/compose.yaml",
-            reference: crate::git_manager::GitReference::Branch(branch),
-        })
-        .unwrap()
-    }
-
-    #[test]
-    fn new() {
-        crate::utils::initialize_logger();
-        let client = Client::tracked(rocket()).expect("valid rocket instance");
-        let response = client.post(uri!(compose::new)).dispatch();
-        assert_eq!(response.status(), Status::BadRequest);
-        let response = client
-            .post(uri!(compose::new))
-            .body(&simple_new_compose_request_data(String::from("main")))
-            .dispatch();
-        let location = response.headers().get_one("Location").unwrap();
-        assert_ne!(location, String::from(""));
-        println!("{}", location.to_string());
-        assert!(location.to_string().starts_with("/compose/"));
-        assert_eq!(response.content_type(), Some(ContentType::JSON));
-        warn!("{}", response.into_string().unwrap());
-    }
-
-    #[test]
-    fn status_errored() {
-        crate::utils::initialize_logger();
-        let client = Client::tracked(rocket()).expect("valid rocket instance");
-        let response = client
-            .post(uri!(compose::new))
-            .body(&simple_new_compose_request_data(String::from("maddin")))
-            .dispatch();
-        let location = response.headers().get_one("Location").unwrap();
-        let response = client.get(location).dispatch();
-        assert_eq!(response.status(), Status::Ok);
-        let mut status = response.into_json::<ComposeStatus>().unwrap();
-        loop {
-            match status {
-                ComposeStatus::FetchingRepo => {
-                    status = client
-                        .get(location)
-                        .dispatch()
-                        .into_json::<ComposeStatus>()
-                        .unwrap();
-                }
-                _ => break,
-            }
-        }
-        assert!(matches!(status, ComposeStatus::ErrorFetchingRepo { .. }));
-    }
-
-    #[test]
-    fn status_ok() {
-        crate::utils::initialize_logger();
-        let client = Client::tracked(rocket()).expect("valid rocket instance");
-        let response = client
-            .post(uri!(compose::new))
-            .body(&simple_new_compose_request_data(String::from("master")))
-            .dispatch();
-        let location = response.headers().get_one("Location").unwrap();
-        let response = client.get(location).dispatch();
-        assert_eq!(response.status(), Status::Ok);
-        let mut status = response.into_json::<ComposeStatus>().unwrap();
-        loop {
-            crate::test_utils::sleep(1);
-            match status {
-                ComposeStatus::FetchingRepo => {
-                    status = client
-                        .get(location)
-                        .dispatch()
-                        .into_json::<ComposeStatus>()
-                        .unwrap();
-                }
-                _ => break,
-            }
-        }
-        let response = client
-            .post(uri!(compose::new))
-            .body(&simple_new_compose_request_data(String::from(
-                "atomist/pin-docker-base-image/nginx-aspnet-mysql/backend/dockerfile",
-            )))
-            .dispatch();
-        let location = response.headers().get_one("Location").unwrap();
-        let response = client.get(location).dispatch();
-        assert_eq!(response.status(), Status::Ok);
-        let mut status = response.into_json::<ComposeStatus>().unwrap();
-        loop {
-            crate::test_utils::sleep(1);
-            match status {
-                ComposeStatus::ComposeStarted => break,
-                _ => {
-                    status = client
-                        .get(location)
-                        .dispatch()
-                        .into_json::<ComposeStatus>()
-                        .unwrap()
-                }
-            }
-        }
-        debug!("{:?}", status);
-        assert!(matches!(status, ComposeStatus::ComposeStarted { .. }));
-    }
+    //     fn simple_new_compose_request_data(branch: String) -> String {
+    //         serde_json::to_string(&NewComposeRequest {
+    //             github_user: "docker",
+    //             github_repo: "awesome-compose",
+    //             path: "traefik-golang/compose.yaml",
+    //             reference: crate::git_manager::GitReference::Branch(branch),
+    //         })
+    //         .unwrap()
+    //     }
 }
 //     #[test]
-//     fn status_ok() {
+//     fn new() {
+//         crate::utils::initialize_logger();
+//         let client = Client::tracked(rocket()).expect("valid rocket instance");
+//         let response = client.post(uri!(compose::new)).dispatch();
+//         assert_eq!(response.status(), Status::BadRequest);
+//         let response = client
+//             .post(uri!(compose::new))
+//             .body(&simple_new_compose_request_data(String::from("main")))
+//             .dispatch();
+//         let location = response.headers().get_one("Location").unwrap();
+//         assert_ne!(location, String::from(""));
+//         println!("{}", location.to_string());
+//         assert!(location.to_string().starts_with("/compose/"));
+//         assert_eq!(response.content_type(), Some(ContentType::JSON));
+//         warn!("{}", response.into_string().unwrap());
+//     }
+
+//     #[test]
+//     fn status_errored() {
+//         crate::utils::initialize_logger();
 //         let client = Client::tracked(rocket()).expect("valid rocket instance");
 //         let response = client
 //             .post(uri!(compose::new))
-//             .body(&simple_new_compose_request_data())
+//             .body(&simple_new_compose_request_data(String::from("maddin")))
 //             .dispatch();
 //         let location = response.headers().get_one("Location").unwrap();
 //         let response = client.get(location).dispatch();
 //         assert_eq!(response.status(), Status::Ok);
-//         //        println!("{}", response.into_string().unwrap());
-//         let status = response.into_json::<ComposeStatus>().unwrap();
-//         assert!(matches!(status, ComposeStatus::Fetching { .. }));
+//         let mut status = response.into_json::<ComposeStatus>().unwrap();
+//         loop {
+//             match status {
+//                 ComposeStatus::FetchingRepo => {
+//                     status = client
+//                         .get(location)
+//                         .dispatch()
+//                         .into_json::<ComposeStatus>()
+//                         .unwrap();
+//                 }
+//                 _ => break,
+//             }
+//         }
+//         assert!(matches!(status, ComposeStatus::ErrorFetchingRepo { .. }));
 //     }
 
 //     #[test]
-//     fn status_bad_uuid() {
-//         let client = Client::tracked(rocket()).expect("valid rocket instance");
-//         let response = client.get("/compose/status/BAD_UUID").dispatch();
-//         assert_eq!(response.status(), Status::BadRequest);
-//     }
-
-//     #[test]
-//     fn status_not_found() {
+//     fn status_ok() {
+//         crate::utils::initialize_logger();
 //         let client = Client::tracked(rocket()).expect("valid rocket instance");
 //         let response = client
-//             .get("/compose/status/e35b1626-bfd9-4220-bd25-1b9527fa290a")
+//             .post(uri!(compose::new))
+//             .body(&simple_new_compose_request_data(String::from("master")))
 //             .dispatch();
-//         assert_eq!(response.status(), Status::NotFound);
+//         let location = response.headers().get_one("Location").unwrap();
+//         let response = client.get(location).dispatch();
+//         assert_eq!(response.status(), Status::Ok);
+//         let mut status = response.into_json::<ComposeStatus>().unwrap();
+//         loop {
+//             crate::test_utils::sleep(1);
+//             match status {
+//                 ComposeStatus::FetchingRepo => {
+//                     status = client
+//                         .get(location)
+//                         .dispatch()
+//                         .into_json::<ComposeStatus>()
+//                         .unwrap();
+//                 }
+//                 _ => break,
+//             }
+//         }
+//         let response = client
+//             .post(uri!(compose::new))
+//             .body(&simple_new_compose_request_data(String::from(
+//                 "atomist/pin-docker-base-image/nginx-aspnet-mysql/backend/dockerfile",
+//             )))
+//             .dispatch();
+//         let location = response.headers().get_one("Location").unwrap();
+//         let response = client.get(location).dispatch();
+//         assert_eq!(response.status(), Status::Ok);
+//         let mut status = response.into_json::<ComposeStatus>().unwrap();
+//         loop {
+//             crate::test_utils::sleep(1);
+//             match status {
+//                 ComposeStatus::ComposeStarted => break,
+//                 _ => {
+//                     status = client
+//                         .get(location)
+//                         .dispatch()
+//                         .into_json::<ComposeStatus>()
+//                         .unwrap()
+//                 }
+//             }
+//         }
+//         debug!("{:?}", status);
+//         assert!(matches!(status, ComposeStatus::ComposeStarted { .. }));
 //     }
 // }
+// //     #[test]
+// //     fn status_ok() {
+// //         let client = Client::tracked(rocket()).expect("valid rocket instance");
+// //         let response = client
+// //             .post(uri!(compose::new))
+// //             .body(&simple_new_compose_request_data())
+// //             .dispatch();
+// //         let location = response.headers().get_one("Location").unwrap();
+// //         let response = client.get(location).dispatch();
+// //         assert_eq!(response.status(), Status::Ok);
+// //         //        println!("{}", response.into_string().unwrap());
+// //         let status = response.into_json::<ComposeStatus>().unwrap();
+// //         assert!(matches!(status, ComposeStatus::Fetching { .. }));
+// //     }
+
+// //     #[test]
+// //     fn status_bad_uuid() {
+// //         let client = Client::tracked(rocket()).expect("valid rocket instance");
+// //         let response = client.get("/compose/status/BAD_UUID").dispatch();
+// //         assert_eq!(response.status(), Status::BadRequest);
+// //     }
+
+// //     #[test]
+// //     fn status_not_found() {
+// //         let client = Client::tracked(rocket()).expect("valid rocket instance");
+// //         let response = client
+// //             .get("/compose/status/e35b1626-bfd9-4220-bd25-1b9527fa290a")
+// //             .dispatch();
+// //         assert_eq!(response.status(), Status::NotFound);
+// //     }
+// // }

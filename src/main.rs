@@ -2,10 +2,6 @@
 #[macro_use]
 extern crate rocket;
 
-
-
-
-
 // #[get("/fetch/<id>")]
 // fn fetch(id: &str, state: &State<ComposeState>) -> String {
 //     let data = state.data.lock().expect("lock shared data");

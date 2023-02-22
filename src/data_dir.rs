@@ -39,6 +39,7 @@ impl DataDir {
     /// # Examples
     ///
     /// ```
+    /// # use lib::*;
     /// use data_dir::DataDir;
     /// let data_dir = DataDir::new("/var/lib/kittengrid-agent".into());
     /// ```
@@ -59,8 +60,9 @@ impl DataDir {
     /// # Examples
     ///
     /// ```
+    /// # use lib::*;
     /// use data_dir::DataDir;
-    /// let data_dir = DataDir::new("/var/lib/kittengrid-agent");
+    /// let mut data_dir = DataDir::new("/var/lib/kittengrid-agent".into());
     /// data_dir.init();
     /// ```
     ///

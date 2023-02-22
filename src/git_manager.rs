@@ -470,7 +470,7 @@ impl RemoteRepo for GitHubRepo {
     }
 
     fn url(&self) -> String {
-        format!("git@github.com:{}/{}.git", self.user, self.repo)
+        format!("https://github.com/{}/{}.git", self.user, self.repo)
     }
 }
 
@@ -528,33 +528,6 @@ mod test {
     use tempfile::{tempdir, TempDir};
     use uuid::uuid;
 
-    /// Redeclarations so we can test private methods
-    impl<'a> GitManager<'a> {
-        pub fn test_download_remote_repository(
-            &self,
-            repo: &impl RemoteRepo,
-        ) -> Result<(), GitManagerCloneError> {
-            self.download_remote_repository(repo)
-        }
-
-        pub fn test_clone_local_by_branch(
-            &self,
-            repo: &impl RemoteRepo,
-            branch: &str,
-            uuid: Uuid,
-        ) -> Result<(), GitManagerCloneError> {
-            self.clone_local_by_branch(repo, branch, uuid)
-        }
-        pub fn test_clone_local_by_commit(
-            &self,
-            repo: &impl RemoteRepo,
-            commit: &str,
-            uuid: Uuid,
-        ) -> Result<(), GitManagerCloneError> {
-            self.clone_local_by_commit(repo, commit, uuid)
-        }
-    }
-
     #[test]
     // When a branch receives new commits, the clone done by the agent will reflect that.
     fn commits_same_branch_by_branch() {
@@ -570,7 +543,7 @@ mod test {
         let data_dir = &manager.data_dir;
         let manager = manager.git_manager().unwrap();
 
-        manager.test_download_remote_repository(&repo).unwrap();
+        manager.download_remote_repository(&repo).unwrap();
         let uuid = uuid!("f37915a0-7195-11ed-a1eb-0242ac120010");
 
         manager
@@ -655,9 +628,7 @@ mod test {
         let manager = manager.git_manager().unwrap();
         manager.download_remote_repository(&repo).unwrap();
         let uuid = uuid!("f37915a0-7195-11ed-a1eb-0242ac120010");
-        manager
-            .test_clone_local_by_branch(&repo, "main", uuid)
-            .unwrap();
+        manager.clone_local_by_branch(&repo, "main", uuid).unwrap();
         let work_path = &data_dir.work_path().unwrap().join(uuid.to_string());
 
         assert!(&work_path.join("test.txt").exists());
@@ -668,9 +639,7 @@ mod test {
         let uuid = uuid!("f37915a0-7195-11ed-a1eb-0242ac120017");
         manager.fetch(&[] as &[&str], &repo).unwrap();
 
-        manager
-            .test_clone_local_by_commit(&repo, &commit, uuid)
-            .unwrap();
+        manager.clone_local_by_commit(&repo, &commit, uuid).unwrap();
 
         assert!(Path::new(
             &data_dir
@@ -725,7 +694,7 @@ mod test {
         };
 
         let result = manager.download_remote_repository(&repo);
-        assert!(result.is_ok());
+        result.unwrap();
     }
 
     #[test]
@@ -763,7 +732,6 @@ mod test {
             user: String::from("kittengrid"),
             repo: String::from("deb-s3"),
         };
-
         assert!(manager.download_remote_repository(&repo).is_ok());
     }
 
@@ -791,15 +759,8 @@ mod test {
         let manager = manager.git_manager().unwrap();
 
         let result = manager.download_remote_repository(&repo);
-        assert!(Path::new(
-            &data_dir
-                .repos_path()
-                .unwrap()
-                .join("url")
-                .join("06ed9b5652b73ec6635aee61bc39691569a694966344ad0fdcb5d679b90deee5")
-                .join("HEAD")
-        )
-        .exists());
+        let target_dir = repo.target_dir(data_dir);
+        assert!(target_dir.as_path().join("HEAD").exists());
 
         assert!(result.is_ok());
     }
@@ -843,7 +804,7 @@ mod test {
         let repo = UrlRepo::new(test_repo("simple-repo"));
         manager.download_remote_repository(&repo).unwrap();
 
-        let result = manager.test_clone_local_by_branch(
+        let result = manager.clone_local_by_branch(
             &repo,
             "main",
             uuid!("f37915a0-7195-11ed-a1eb-0242ac120002"),
@@ -871,11 +832,7 @@ mod test {
         ))
         .unwrap();
         manager
-            .test_clone_local_by_branch(
-                &repo,
-                "main",
-                uuid!("f37915a0-7195-11ed-a1eb-0242ac120003"),
-            )
+            .clone_local_by_branch(&repo, "main", uuid!("f37915a0-7195-11ed-a1eb-0242ac120003"))
             .unwrap();
 
         let second_metadata = fs::metadata(Path::new(
@@ -900,7 +857,7 @@ mod test {
         let repo = UrlRepo::new(test_repo("simple-repo"));
         manager.download_remote_repository(&repo).unwrap();
         manager.download_remote_repository(&repo).unwrap();
-        let result = manager.test_clone_local_by_commit(
+        let result = manager.clone_local_by_commit(
             &repo,
             "222a7a3b719453af7574f08591650f6b8ab91bd5",
             uuid!("f37915a0-7195-11ed-a1eb-0242ac120002"),
@@ -931,7 +888,7 @@ mod test {
         .unwrap();
 
         manager
-            .test_clone_local_by_commit(
+            .clone_local_by_commit(
                 &repo,
                 "222a7a3b719453af7574f08591650f6b8ab91bd5",
                 uuid!("f37915a0-7195-11ed-a1eb-0242ac120003"),
