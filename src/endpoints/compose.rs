@@ -1,14 +1,17 @@
 use crate::agent_state;
+use crate::compose::Context;
 use crate::docker_compose::DockerCompose;
 use crate::git_manager::{get_git_manager, GitHubRepo, GitReference};
 use crate::{compose, data_dir};
 use axum::{
+    extract::Path as AxumPath,
     http::{header, StatusCode},
     response::IntoResponse,
     Json,
 };
 use log::info;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::path::Path;
 use std::sync::Arc;
 use tokio;
@@ -29,14 +32,22 @@ use uuid::Uuid;
 // Struct for Request data
 
 #[derive(Deserialize)]
-pub struct NewComposeRequest {
+pub struct CreateRequest {
     github_user: String,
     github_repo: String,
     path: String,
     reference: GitReference,
 }
 
-pub async fn new(Json(payload): Json<NewComposeRequest>) -> impl IntoResponse {
+#[derive(Serialize)]
+pub struct CreateResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<Uuid>,
+}
+
+pub async fn create(Json(payload): Json<CreateRequest>) -> impl IntoResponse {
     let id = Uuid::new_v4();
     let repo = GitHubRepo::new(&payload.github_user, &payload.github_repo);
     let reference = payload.reference.clone();
@@ -59,7 +70,7 @@ pub async fn new(Json(payload): Json<NewComposeRequest>) -> impl IntoResponse {
         let ctx = ctx.clone();
         async move {
             info!(
-		    "Starting docker-compose for repository: {:?}, reference: {:?}, compose_files: {:?}",
+		"Starting docker-compose for repository: {:?}, reference: {:?}, compose_files: {:?}",
 		ctx.repo(),
 		    ctx.repo_reference(),
 		    ctx.paths()
@@ -112,41 +123,59 @@ pub async fn new(Json(payload): Json<NewComposeRequest>) -> impl IntoResponse {
 
     (
         StatusCode::ACCEPTED,
-        [(header::CONTENT_TYPE, "application/json")],
-        Json(format!("{{\"id\":\"{}\"}}", id)),
+        [(header::LOCATION, format!("compose/{}", id))],
+        Json(CreateResponse {
+            id: Some(id),
+            error: None,
+        }),
     )
 }
 
-// GET /compose/%{id}/status
-// Returns Status of the component
-//
+/// GET /compose/:id
+/// Returns Status of the component
+#[derive(Serialize)]
+pub struct ShowResponse<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(flatten)]
+    inner: Option<Arc<Context<'a>>>,
+}
 
-// #[get("/compose/<id>/status")]
-// pub fn status(
-//     agent_state: &State<crate::AgentState>,
-//     id: String,
-// ) -> Result<Json<compose::Status>, rocket::response::status::Custom<&'static str>> {
-//     let id = match Uuid::parse_str(&id) {
-//         Ok(id) => id,
-//         Err(_err) => {
-//             return Err(rocket::response::status::Custom(
-//                 Status::BadRequest,
-//                 "Malformed id",
-//             ))
-//         }
-//     };
+pub async fn show<'a>(AxumPath(id): AxumPath<String>) -> (StatusCode, impl IntoResponse) {
+    let uid = match Uuid::parse_str(&id) {
+        Ok(uid) => uid,
+        Err(err) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ShowResponse {
+                    error: Some(format!("Malformed Id: {}. Error: {}", id, err)),
+                    inner: None,
+                }),
+            )
+        }
+    };
 
-//     {
-//         let hash = agent_state.read().unwrap();
-//         match hash.get(&id) {
-//             Some(ctx) => Ok(Json(ctx.status())),
-//             None => Err(rocket::response::status::Custom(
-//                 Status::NotFound,
-//                 "Not found",
-//             )),
-//         }
-//     }
-// }
+    {
+        let hash = agent_state().read().unwrap();
+        match hash.get(&uid) {
+            Some(ctx) => (
+                StatusCode::OK,
+                Json(ShowResponse {
+                    error: None,
+                    inner: Some(ctx.clone()),
+                }),
+            ),
+            None => (
+                StatusCode::NOT_FOUND,
+                Json(ShowResponse {
+                    error: Some(format!("Not Found Id: {}", id)),
+                    inner: None,
+                }),
+            ),
+        }
+    }
+}
 
 // // POST /compose/%{id}/stop
 // // Stops the docker-compose run.

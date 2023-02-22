@@ -22,18 +22,22 @@ pub enum Status {
     ComposeStoppingError(DockerComposeRunError),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 struct InnerContext<'a> {
     pub status: Status,
     pub repo: GitHubRepo,
     pub repo_reference: GitReference,
     pub paths: Vec<String>,
-    pub handle: Option<tokio::task::JoinHandle<()>>,
-    pub docker_compose: Option<DockerCompose<'a>>,
     id: Uuid,
+    #[serde(skip)]
+    pub handle: Option<tokio::task::JoinHandle<()>>,
+    #[serde(skip)]
+    pub docker_compose: Option<DockerCompose<'a>>,
 }
 
+#[derive(Serialize)]
 pub struct Context<'a> {
+    #[serde(flatten)]
     inner: Arc<RwLock<InnerContext<'a>>>,
 }
 

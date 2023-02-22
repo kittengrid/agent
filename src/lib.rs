@@ -33,7 +33,8 @@ pub async fn launch() {
     // build our application with a router
     let app = Router::new()
         .route("/sys/hello", get(endpoints::sys::hello))
-        .route("/compose", post(endpoints::compose::new));
+        .route("/compose", post(endpoints::compose::create))
+        .route("/compose/:id", get(endpoints::compose::show));
 
     // run our app with hyper
     // `axum::Server` is a re-export of `hyper::Server`
