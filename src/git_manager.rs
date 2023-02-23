@@ -470,7 +470,7 @@ impl RemoteRepo for GitHubRepo {
     }
 
     fn url(&self) -> String {
-        format!("git@github.com:{}/{}.git", self.user, self.repo)
+        format!("https://github.com/{}/{}.git", self.user, self.repo)
     }
 }
 
