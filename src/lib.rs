@@ -1,6 +1,8 @@
 use std::collections::HashMap;
+use std::str::FromStr;
 use uuid::Uuid;
 
+mod api_error;
 pub mod compose;
 mod config;
 pub mod data_dir;
@@ -14,10 +16,12 @@ use axum::{
 };
 use log::debug;
 use once_cell::sync::Lazy;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 
 extern crate log;
 use std::sync::{Arc, RwLock};
+
+use crate::config::get_config;
 pub type AgentState<'a> = Arc<RwLock<HashMap<Uuid, Arc<compose::Context<'a>>>>>;
 static AGENT_STATE: Lazy<AgentState> =
     Lazy::new(|| Arc::new(RwLock::new(HashMap::<Uuid, Arc<compose::Context>>::new())));
@@ -29,6 +33,7 @@ pub fn agent_state() -> &'static AgentState<'static> {
 
 pub async fn launch() {
     utils::initialize_logger();
+    let config = get_config();
 
     // build our application with a router
     let app = Router::new()
@@ -36,22 +41,13 @@ pub async fn launch() {
         .route("/compose", post(endpoints::compose::create))
         .route("/compose/:id", get(endpoints::compose::show));
 
-    // run our app with hyper
-    // `axum::Server` is a re-export of `hyper::Server`
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
-    debug!("listening on {}", addr);
+    let ip_addr = IpAddr::from_str(&config.bind_address).expect("Incorrect ip addr specified");
+    let addr = SocketAddr::new(ip_addr, config.bind_port);
+
     axum::Server::bind(&addr)
         .serve(app.into_make_service())
         .await
         .unwrap();
-    // rocket::build()
-    //     .manage(state)
-    //     .mount("/", routes![endpoints::compose::new])
-    //     .mount("/", routes![endpoints::compose::status])
-    //     .mount("/", routes![endpoints::compose::stop])
-    //     .mount("/", routes![endpoints::compose::start])
-    //     .mount("/", routes![endpoints::compose::show])
-    //     .mount("/", routes![endpoints::sys::hello])
 }
 
 #[cfg(test)]

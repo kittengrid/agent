@@ -9,6 +9,8 @@ static CONFIG: Lazy<Config> = Lazy::new(|| {
         Config {
             log_level: LevelFilter::Error,
             work_directory: String::from("/tmp/test"),
+            bind_address: String::from("127.0.0.1"),
+            bind_port: 8000,
         }
     } else {
         Config::parse()
@@ -33,6 +35,12 @@ pub struct Config {
         env("WORK_DIR")
     )]
     pub work_directory: String,
+
+    #[arg(long, default_value("127.0.0.1"), env("BIND_ADDRESS"))]
+    pub bind_address: String,
+
+    #[arg(long, default_value("3000"), env("BIND_PORT"))]
+    pub bind_port: u16,
 }
 
 #[cfg(test)]
@@ -41,10 +49,7 @@ mod test {
 
     #[test]
     fn parse() {
-        let config = Config {
-            log_level: LevelFilter::Debug,
-            work_directory: String::from("/tmp/test"),
-        };
-        println!("{:?}", config);
+        let config = get_config();
+        assert_eq!(config.bind_address, "127.0.0.1");
     }
 }

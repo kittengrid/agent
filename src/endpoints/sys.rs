@@ -12,15 +12,21 @@ mod test {
         http::{Request, StatusCode},
     };
 
-    #[tokio::test]
+    use crate::config::get_config;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     async fn hello() {
-        tokio::spawn(async move { crate::launch().await });
+        tokio::task::spawn(async { crate::launch().await });
+        let config = get_config();
 
         let client = hyper::Client::new();
         let response = client
             .request(
                 Request::builder()
-                    .uri(format!("http://localhost:3000/sys/hello"))
+                    .uri(format!(
+                        "http://{}:{}/sys/hello",
+                        config.bind_address, config.bind_port
+                    ))
                     .body(Body::empty())
                     .unwrap(),
             )

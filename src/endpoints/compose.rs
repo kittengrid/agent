@@ -1,4 +1,5 @@
 use crate::agent_state;
+use crate::api_error::ApiError;
 use crate::compose::Context;
 use crate::docker_compose::DockerCompose;
 use crate::git_manager::{get_git_manager, GitHubRepo, GitReference};
@@ -9,29 +10,18 @@ use axum::{
     response::IntoResponse,
     Json,
 };
+use axum_extra::extract::WithRejection;
+use hyper::header::HeaderName;
 use log::info;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use std::path::Path;
 use std::sync::Arc;
 use tokio;
 
 use uuid::Uuid;
 
-// POST /compose/
-//
-// Fetches the repository and starts a docker-compose up (it sets the run into fetching state)
-//
-// Parameters
-//  repo:, :path = ./docker-compose.yaml
-//
-// Returns
-//    HTTP/1.1 202 (Accepted)
-//    Location: /compose/%{id}
-
-// Struct for Request data
-
-#[derive(Deserialize)]
+// Structs for create request and response
+#[derive(Deserialize, Serialize, Debug)]
 pub struct CreateRequest {
     github_user: String,
     github_repo: String,
@@ -39,7 +29,7 @@ pub struct CreateRequest {
     reference: GitReference,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct CreateResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
@@ -47,7 +37,37 @@ pub struct CreateResponse {
     id: Option<Uuid>,
 }
 
-pub async fn create(Json(payload): Json<CreateRequest>) -> impl IntoResponse {
+/// POST /compose/
+///
+/// Fetches the repository and starts a docker-compose. This endpoint is asynchronous
+/// if everything goes well, it schedules the job and returns a 202 Accepted with a Location header
+/// containinig the resource url.
+///
+/// # Arguments
+///
+///  * `github_user` - Github user to construct the url for fetching the repo.
+///  * `github_repo` - Github repo to construct the url for fetching the repo.
+///  * `path`        - Path of docker-compose file relative to repository.
+///  * `reference`   - Either a branch or a commit.
+///
+/// # Example
+///
+/// ```bash
+/// curl -d '{"github_user":"docker", \
+///           "github_repo": "awesome-compose", \
+///           "path": "minecraft/compose.yaml", \
+///           "reference": {"branch": "master"}}' \
+///           -H "Content-Type: application/json" \
+///           -X POST http://localhost:3000/compose
+///
+/// # Response
+///
+///    HTTP/1.1 202 (Accepted)
+///    Location: /compose/%{id}
+///
+pub async fn create(
+    WithRejection(Json(payload), _): WithRejection<Json<CreateRequest>, ApiError>,
+) -> impl IntoResponse {
     let id = Uuid::new_v4();
     let repo = GitHubRepo::new(&payload.github_user, &payload.github_repo);
     let reference = payload.reference.clone();
@@ -62,7 +82,19 @@ pub async fn create(Json(payload): Json<CreateRequest>) -> impl IntoResponse {
 
     {
         let ctx = ctx.clone();
-        let mut hash = agent_state().write().unwrap();
+        let mut hash = match agent_state().write() {
+            Ok(hash) => hash,
+            Err(err) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    [(header::LOCATION, String::from(""))],
+                    Json(CreateResponse {
+                        id: None,
+                        error: Some(format!("{:?}", err)),
+                    }),
+                )
+            }
+        };
         hash.insert(id, ctx);
     }
 
@@ -132,7 +164,7 @@ pub async fn create(Json(payload): Json<CreateRequest>) -> impl IntoResponse {
 }
 
 /// GET /compose/:id
-/// Returns Status of the component
+/// Returns information of the component
 #[derive(Serialize)]
 pub struct ShowResponse<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -288,6 +320,57 @@ pub async fn show<'a>(AxumPath(id): AxumPath<String>) -> (StatusCode, impl IntoR
 //         }
 //     }
 // }
+
+mod test {
+    use super::*;
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+    };
+
+    use crate::config::get_config;
+
+    fn simple_new_compose_request_data(branch: &str) -> CreateRequest {
+        CreateRequest {
+            github_user: String::from("docker"),
+            github_repo: String::from("awesome-compose"),
+            path: String::from("traefik-golang/compose.yaml"),
+            reference: crate::git_manager::GitReference::Branch(branch.to_string()),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+    async fn create() {
+        tokio::task::spawn(async { crate::launch().await });
+        let config = get_config();
+
+        let client = hyper::Client::new();
+
+        let response = client
+            .request(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!(
+                        "http://{}:{}/compose",
+                        config.bind_address, config.bind_port
+                    ))
+                    .header("Content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_string(&simple_new_compose_request_data("main")).unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let body_bytes = hyper::body::to_bytes(response.into_body()).await.unwrap();
+        let data = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+        let create_response: CreateResponse = serde_json::from_str(&data).unwrap();
+        println!("{:?}", create_response);
+        println!("{:?}", data);
+    }
+}
 
 // #[cfg(test)]
 // mod test {
