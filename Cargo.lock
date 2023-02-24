@@ -242,7 +242,6 @@ dependencies = [
 [[package]]
 name = "compose_rust"
 version = "0.1.0"
-source = "git+ssh://git@github.com/kittengrid/compose_rust.git#45d2bff6c0b627c7d429b280ff097025d5a19b4c"
 dependencies = [
  "indexmap",
  "jsonschema",

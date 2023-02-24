@@ -1,0 +1,11 @@
+version: "3.9"
+services:
+  web:
+    environment:
+      - TEST=1
+      - TEST2
+  redis:
+    environment:
+      TEST2:
+      TEST: 1
+
