@@ -6,7 +6,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use std::str::{self};
+use std::str;
 use thiserror::Error;
 
 /// Data structure to manage docker-compose execution
@@ -319,6 +319,7 @@ impl<'a> DockerCompose<'a> {
 mod test {
     use super::*;
     use crate::data_dir::DataDir;
+    use log::debug;
     use tempfile::{tempdir, TempDir};
 
     #[test]

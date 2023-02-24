@@ -22,23 +22,28 @@ pub enum Status {
     ComposeStoppingError(DockerComposeRunError),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 struct InnerContext<'a> {
     pub status: Status,
     pub repo: GitHubRepo,
     pub repo_reference: GitReference,
     pub paths: Vec<String>,
-    pub handle: Option<rocket::tokio::task::JoinHandle<()>>,
-    pub docker_compose: Option<DockerCompose<'a>>,
     id: Uuid,
+    #[serde(skip)]
+    pub handle: Option<tokio::task::JoinHandle<()>>,
+    #[serde(skip)]
+    pub docker_compose: Option<DockerCompose<'a>>,
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct Context<'a> {
+    #[serde(flatten)]
     inner: Arc<RwLock<InnerContext<'a>>>,
 }
 
 impl<'a> Context<'a> {
     pub fn new(
+        id: Uuid,
         status: Status,
         repo: GitHubRepo,
         repo_reference: GitReference,
@@ -50,8 +55,8 @@ impl<'a> Context<'a> {
                 repo,
                 repo_reference,
                 paths,
+                id,
                 docker_compose: None,
-                id: Uuid::new_v4(),
                 handle: None,
             })),
         }
@@ -89,7 +94,7 @@ impl<'a> Context<'a> {
         self.inner.write().unwrap().status = status;
     }
 
-    pub fn set_handle(&self, handle: rocket::tokio::task::JoinHandle<()>) {
+    pub fn set_handle(&self, handle: tokio::task::JoinHandle<()>) {
         self.inner.write().unwrap().handle = Some(handle);
     }
 

@@ -1,6 +1,10 @@
 #[cfg(test)]
 use crate::data_dir::DataDir;
+use hyper::client::HttpConnector;
+use hyper::Client;
+use log::debug;
 
+use std::net::TcpListener;
 use std::process::{Command, Output};
 use std::{thread, time};
 use tempfile::{tempdir, TempDir};
@@ -165,4 +169,38 @@ fn git_command() -> Command {
 pub fn sleep(secs: u64) {
     let secs = time::Duration::from_secs(secs);
     thread::sleep(secs);
+}
+
+pub struct ServerTest {
+    guard: tokio::task::JoinHandle<()>,
+    pub client: hyper::Client<HttpConnector>,
+    addr: String,
+    port: u16,
+}
+
+impl Drop for ServerTest {
+    fn drop(&mut self) {
+        self.guard.abort();
+    }
+}
+
+impl ServerTest {
+    pub fn url_for(&self, path: &str) -> String {
+        format!("http://{}:{}{}", self.addr, self.port, path)
+    }
+
+    pub async fn new() -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap().ip().to_string();
+        let port = listener.local_addr().unwrap().port();
+        let client = Client::new();
+
+        let guard = tokio::task::spawn(async move { crate::launch(listener).await });
+        Self {
+            guard,
+            client,
+            addr,
+            port,
+        }
+    }
 }

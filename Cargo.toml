@@ -17,8 +17,11 @@ path = "src/lib.rs"
 log = "0.4"
 clap = { version = "4.0.10", features = ["derive", "env"] }
 env_logger = "0.9"
-rocket = { version = "0.5.0-rc.2", features = ["json"] }
-serde = { version = "1.0", features = ["derive"] }
+axum = "0.6.7"
+axum-extra = "0.5.0"
+hyper = "0.14.23"
+
+serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0.83"
 git2 = "0.15.0"
 tokio = { version = "1", features = ["full"] }

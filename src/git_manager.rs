@@ -1,8 +1,9 @@
 use crate::data_dir::{get_data_dir, DataDir, DataDirError};
 use git2::build::{CheckoutBuilder, CloneLocal, RepoBuilder};
 use git2::{Config, Cred, FetchOptions, Object, Oid, RemoteCallbacks, Repository};
+use log::{debug, error, warn};
 use once_cell::sync::Lazy;
-use rocket::serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::env;
 use std::fs;
@@ -522,10 +523,10 @@ mod test {
     use super::*;
     use crate::test_utils::{self, git_commit_all};
     use crate::utils::initialize_logger;
-    use rocket::tokio;
     use std::fs::File;
     use std::os::unix::fs::MetadataExt;
     use tempfile::{tempdir, TempDir};
+    use tokio;
     use uuid::uuid;
 
     #[test]
