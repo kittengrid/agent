@@ -4,6 +4,7 @@ extern crate rocket;
 
 use std::collections::HashMap;
 use uuid::Uuid;
+use std::net::Ipv4Addr;
 
 //Rocket
 pub mod compose;
@@ -19,10 +20,16 @@ use std::sync::{Arc, RwLock};
 pub type AgentState<'a> = Arc<RwLock<HashMap<Uuid, Arc<compose::Context<'a>>>>>;
 
 pub fn rocket() -> rocket::Rocket<rocket::Build> {
+    let config = rocket::Config {
+        port: 8000,
+        address: Ipv4Addr::new(0, 0, 0, 0).into(),
+        ..rocket::Config::default()
+    };
+
     utils::initialize_logger();
 
     let state: AgentState = Arc::new(RwLock::new(HashMap::<Uuid, Arc<compose::Context>>::new()));
-    rocket::build()
+    rocket::custom(&config)
         .manage(state)
         .mount("/", routes![endpoints::compose::new])
         .mount("/", routes![endpoints::compose::status])
