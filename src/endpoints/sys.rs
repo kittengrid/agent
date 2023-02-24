@@ -7,26 +7,21 @@ pub async fn hello() -> &'static str {
 
 #[cfg(test)]
 mod test {
+    use crate::test_utils::*;
     use axum::{
         body::Body,
         http::{Request, StatusCode},
     };
 
-    use crate::config::get_config;
-
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     async fn hello() {
-        tokio::task::spawn(async { crate::launch().await });
-        let config = get_config();
+        let server_test = ServerTest::new().await;
 
-        let client = hyper::Client::new();
-        let response = client
+        let response = server_test
+            .client
             .request(
                 Request::builder()
-                    .uri(format!(
-                        "http://{}:{}/sys/hello",
-                        config.bind_address, config.bind_port
-                    ))
+                    .uri(server_test.url_for("/sys/hello"))
                     .body(Body::empty())
                     .unwrap(),
             )

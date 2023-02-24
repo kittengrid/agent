@@ -1,30 +1,11 @@
-// #[get("/fetch/<id>")]
-// fn fetch(id: &str, state: &State<ComposeState>) -> String {
-//     let data = state.data.lock().expect("lock shared data");
-//     match data.get(id) {
-//         Some(value) => value.to_string(),
-//         None => String::from("NONE"),
-//     }
-// }
+use std::net::TcpListener;
 
-// POST /compose/
-//
-// Fetches the repository and starts a docker-compose up (it sets the run into fetching state)
-//
-// Parameters
-//  repo:, :path = ./docker-compose.yaml
-//
-// Returns
-//    HTTP/1.1 202 (Accepted)
-//    Location: /compose/%{id}
-
-// GET /compose/status/%{id}
-// Returns Status of the component
-//
-// GET /compose/%{id}
-// Returns the component
+use lib::config::get_config;
 
 #[tokio::main]
 async fn main() {
-    lib::launch().await;
+    let config = get_config();
+    let listener: TcpListener =
+        TcpListener::bind(format!("{}:{}", config.bind_address, config.bind_port)).unwrap();
+    lib::launch(listener).await;
 }

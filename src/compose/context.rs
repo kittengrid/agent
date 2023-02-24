@@ -35,7 +35,7 @@ struct InnerContext<'a> {
     pub docker_compose: Option<DockerCompose<'a>>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct Context<'a> {
     #[serde(flatten)]
     inner: Arc<RwLock<InnerContext<'a>>>,
@@ -43,6 +43,7 @@ pub struct Context<'a> {
 
 impl<'a> Context<'a> {
     pub fn new(
+        id: Uuid,
         status: Status,
         repo: GitHubRepo,
         repo_reference: GitReference,
@@ -54,8 +55,8 @@ impl<'a> Context<'a> {
                 repo,
                 repo_reference,
                 paths,
+                id,
                 docker_compose: None,
-                id: Uuid::new_v4(),
                 handle: None,
             })),
         }

@@ -14,9 +14,8 @@
 //! [#1116]: https://github.com/tokio-rs/axum/issues/1116#issuecomment-1186197684
 
 use axum::{extract::rejection::JsonRejection, http::StatusCode, response::IntoResponse, Json};
-use axum_extra::extract::WithRejection;
-use serde::Serialize;
-use serde_json::{json, Value};
+
+use serde_json::json;
 use thiserror::Error;
 
 // We derive `thiserror::Error`

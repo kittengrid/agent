@@ -11,7 +11,7 @@ use axum::{
     Json,
 };
 use axum_extra::extract::WithRejection;
-use hyper::header::HeaderName;
+
 use log::info;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -53,12 +53,14 @@ pub struct CreateResponse {
 /// # Example
 ///
 /// ```bash
-/// curl -d '{"github_user":"docker", \
-///           "github_repo": "awesome-compose", \
-///           "path": "minecraft/compose.yaml", \
-///           "reference": {"branch": "master"}}' \
-///           -H "Content-Type: application/json" \
-///           -X POST http://localhost:3000/compose
+/// curl -d '{
+///   "github_user":"docker", \
+///   "github_repo": "awesome-compose", \
+///   "path": "minecraft/compose.yaml", \
+///   "reference": {"branch": "master"}}' \
+///   -H "Content-Type: application/json" \
+///   -X POST http://localhost:3000/compose
+/// ```
 ///
 /// # Response
 ///
@@ -74,6 +76,7 @@ pub async fn create(
     let path = payload.path;
 
     let ctx = Arc::new(compose::Context::new(
+        id,
         compose::Status::FetchingRepo,
         repo.clone(),
         reference.clone(),
@@ -155,7 +158,7 @@ pub async fn create(
 
     (
         StatusCode::ACCEPTED,
-        [(header::LOCATION, format!("compose/{}", id))],
+        [(header::LOCATION, format!("/compose/{}", id))],
         Json(CreateResponse {
             id: Some(id),
             error: None,
@@ -163,9 +166,7 @@ pub async fn create(
     )
 }
 
-/// GET /compose/:id
-/// Returns information of the component
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct ShowResponse<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
@@ -174,7 +175,41 @@ pub struct ShowResponse<'a> {
     inner: Option<Arc<Context<'a>>>,
 }
 
+/// GET /compose/:id
+///
+/// Returns the information related to a given compose execution.
+///
+/// # Arguments
+///
+///  * `id` - Id returned by create endpoint.
+///
+/// # Example
+///
+/// ```bash
+/// curl http://localhost:3000/compose/ID
+/// ```
+///
+/// # Response
+///
+/// ```bash
+///    HTTP/1.1 200 Ok
+///    ...
+///    {
+///      "id" : "1a7fbdd3-84ca-4693-8935-1f93c152a1d8",
+///      "paths" : ["docker-compose.yaml"],
+///      "repo" : {
+///         "repo" : "awesome-compose",
+///         "user" : "docker"
+///      },
+///      "repo_reference" : {
+///         "branch" : "master"
+///      },
+///      "status" : "ComposeStarted"
+///   }
+/// ```
+///
 pub async fn show<'a>(AxumPath(id): AxumPath<String>) -> (StatusCode, impl IntoResponse) {
+    // @TODO: Use the extractor here
     let uid = match Uuid::parse_str(&id) {
         Ok(uid) => uid,
         Err(err) => {
@@ -321,14 +356,13 @@ pub async fn show<'a>(AxumPath(id): AxumPath<String>) -> (StatusCode, impl IntoR
 //     }
 // }
 
+#[cfg(test)]
 mod test {
-    use super::*;
-    use axum::{
-        body::Body,
-        http::{Request, StatusCode},
-    };
+    use crate::test_utils::*;
 
-    use crate::config::get_config;
+    use super::*;
+    use axum::http::Request;
+    use hyper::body::Body;
 
     fn simple_new_compose_request_data(branch: &str) -> CreateRequest {
         CreateRequest {
@@ -339,39 +373,135 @@ mod test {
         }
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
-    async fn create() {
-        tokio::task::spawn(async { crate::launch().await });
-        let config = get_config();
-
-        let client = hyper::Client::new();
-
-        let response = client
+    async fn create_request(server_test: &ServerTest, body: Body) -> hyper::Response<Body> {
+        server_test
+            .client
             .request(
                 Request::builder()
                     .method("POST")
-                    .uri(format!(
-                        "http://{}:{}/compose",
-                        config.bind_address, config.bind_port
-                    ))
+                    .uri(server_test.url_for("/compose"))
                     .header("Content-type", "application/json")
-                    .body(Body::from(
-                        serde_json::to_string(&simple_new_compose_request_data("main")).unwrap(),
-                    ))
+                    .body(body)
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    }
+
+    async fn create_response_from_body(body: Body) -> CreateResponse {
+        let body_bytes = hyper::body::to_bytes(body).await.unwrap();
+        let data = String::from_utf8(body_bytes.to_vec()).unwrap();
+        serde_json::from_str(&data).unwrap()
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn create() {
+        let server_test = ServerTest::new().await;
+
+        let response = create_request(
+            &server_test,
+            Body::from(serde_json::to_string(&simple_new_compose_request_data("main")).unwrap()),
+        )
+        .await;
+
+        let headers = response.headers();
+        let location = headers
+            .get("Location")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert_ne!(location, String::from(""));
+        assert!(location.to_string().starts_with("/compose/"));
+        let location_id = &location[9..];
+
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let response = create_response_from_body(response.into_body()).await;
+
+        assert_eq!(format!("{}", response.id.unwrap()), location_id.to_string());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn create_parameter_error() {
+        let server_test = ServerTest::new().await;
+
+        let response = create_request(&server_test, Body::from("INCORRECT_BODY")).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let response = create_response_from_body(response.into_body()).await;
+        assert_ne!(response.error.unwrap(), "");
+    }
+
+    async fn show_request(server_test: &ServerTest, id: Uuid) -> hyper::Response<Body> {
+        server_test
+            .client
+            .request(
+                Request::builder()
+                    .method("GET")
+                    .uri(server_test.url_for(&format!("/compose/{}", id)))
+                    .header("Content-type", "application/json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    }
+
+    async fn show_response_from_body<'a>(body: Body) -> ShowResponse<'a> {
+        let body_bytes = hyper::body::to_bytes(body).await.unwrap();
+        let data = String::from_utf8(body_bytes.to_vec()).unwrap();
+        serde_json::from_str(&data).unwrap()
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn show_of_a_created_compose() {
+        let server_test = ServerTest::new().await;
+
+        let response = create_request(
+            &server_test,
+            Body::from(serde_json::to_string(&simple_new_compose_request_data("main")).unwrap()),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+
+        let response = create_response_from_body(response.into_body()).await;
+        let id = response.id.unwrap();
+        let response = show_request(&server_test, id).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let response = show_response_from_body(response.into_body()).await;
+        assert_eq!(response.inner.unwrap().id(), id);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn show_with_incorrect_uuid() {
+        let server_test = ServerTest::new().await;
+
+        let response = server_test
+            .client
+            .request(
+                Request::builder()
+                    .method("GET")
+                    .uri(server_test.url_for("/compose/NOT_AN_UUID"))
+                    .header("Content-type", "application/json")
+                    .body(Body::empty())
                     .unwrap(),
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::ACCEPTED);
-        let body_bytes = hyper::body::to_bytes(response.into_body()).await.unwrap();
-        let data = String::from_utf8(body_bytes.to_vec()).unwrap();
 
-        let create_response: CreateResponse = serde_json::from_str(&data).unwrap();
-        println!("{:?}", create_response);
-        println!("{:?}", data);
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let response = show_response_from_body(response.into_body()).await;
+        assert_ne!(response.error.unwrap(), String::from(""));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn show_with_missing_uuid() {
+        let server_test = ServerTest::new().await;
+
+        let response = show_request(&server_test, Uuid::new_v4()).await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 }
-
 // #[cfg(test)]
 // mod test {
 

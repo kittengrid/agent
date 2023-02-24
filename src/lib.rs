@@ -1,10 +1,9 @@
 use std::collections::HashMap;
-use std::str::FromStr;
 use uuid::Uuid;
 
 mod api_error;
 pub mod compose;
-mod config;
+pub mod config;
 pub mod data_dir;
 pub mod docker_compose;
 mod endpoints;
@@ -14,14 +13,13 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use log::debug;
+use std::net::TcpListener;
+
 use once_cell::sync::Lazy;
-use std::net::{IpAddr, SocketAddr};
 
 extern crate log;
 use std::sync::{Arc, RwLock};
 
-use crate::config::get_config;
 pub type AgentState<'a> = Arc<RwLock<HashMap<Uuid, Arc<compose::Context<'a>>>>>;
 static AGENT_STATE: Lazy<AgentState> =
     Lazy::new(|| Arc::new(RwLock::new(HashMap::<Uuid, Arc<compose::Context>>::new())));
@@ -31,20 +29,21 @@ pub fn agent_state() -> &'static AgentState<'static> {
     &AGENT_STATE
 }
 
-pub async fn launch() {
-    utils::initialize_logger();
-    let config = get_config();
-
-    // build our application with a router
-    let app = Router::new()
+pub fn router() -> Router {
+    Router::new()
         .route("/sys/hello", get(endpoints::sys::hello))
         .route("/compose", post(endpoints::compose::create))
-        .route("/compose/:id", get(endpoints::compose::show));
+        .route("/compose/:id", get(endpoints::compose::show))
+}
 
-    let ip_addr = IpAddr::from_str(&config.bind_address).expect("Incorrect ip addr specified");
-    let addr = SocketAddr::new(ip_addr, config.bind_port);
+pub async fn launch(listener: TcpListener) {
+    utils::initialize_logger();
 
-    axum::Server::bind(&addr)
+    // build our application with a router
+    let app = router();
+
+    axum::Server::from_tcp(listener)
+        .unwrap()
         .serve(app.into_make_service())
         .await
         .unwrap();
