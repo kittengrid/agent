@@ -1,0 +1,10 @@
+# Ignore everything
+*
+Dockerfile
+
+# Allow whitelisted files
+!Cargo.toml
+!Cargo.lock
+!src
+!compose_rust
+
