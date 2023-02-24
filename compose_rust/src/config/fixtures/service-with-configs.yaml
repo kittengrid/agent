@@ -1,0 +1,15 @@
+version: "3.9"
+services:
+  web:
+    expose:
+      - "1110"
+    configs:
+      - test
+      - one
+      - two
+      - three
+  db:
+    configs:
+      - source: pepe
+        uid: 1
+    
