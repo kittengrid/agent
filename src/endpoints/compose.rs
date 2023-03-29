@@ -25,6 +25,7 @@ use uuid::Uuid;
 pub struct CreateRequest {
     github_user: String,
     github_repo: String,
+    token: String,
     path: String,
     reference: GitReference,
 }
@@ -49,11 +50,13 @@ pub struct CreateResponse {
 ///  * `github_repo` - Github repo to construct the url for fetching the repo.
 ///  * `path`        - Path of docker-compose file relative to repository.
 ///  * `reference`   - Either a branch or a commit.
+///  * `token`       - Github Token to be used
 ///
 /// # Example
 ///
 /// ```bash
 /// curl -d '{
+///   "token": "ghs_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
 ///   "github_user":"docker", \
 ///   "github_repo": "awesome-compose", \
 ///   "path": "minecraft/compose.yaml", \
@@ -71,7 +74,7 @@ pub async fn create(
     WithRejection(Json(payload), _): WithRejection<Json<CreateRequest>, ApiError>,
 ) -> impl IntoResponse {
     let id = Uuid::new_v4();
-    let repo = GitHubRepo::new(&payload.github_user, &payload.github_repo);
+    let repo = GitHubRepo::new(&payload.github_user, &payload.github_repo, &payload.token);
     let reference = payload.reference.clone();
     let path = payload.path;
 
@@ -370,6 +373,7 @@ mod test {
             github_repo: String::from("awesome-compose"),
             path: String::from("traefik-golang/compose.yaml"),
             reference: crate::git_manager::GitReference::Branch(branch.to_string()),
+            token: String::from("token"),
         }
     }
 

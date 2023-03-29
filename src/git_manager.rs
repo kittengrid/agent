@@ -5,10 +5,8 @@ use log::{debug, error, warn};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::env;
 use std::fs;
 use std::io::{self, Write};
-use std::path::Path;
 use std::path::PathBuf;
 use std::str;
 use std::sync::Mutex;
@@ -153,7 +151,7 @@ impl<'a> GitManager<'a> {
     /// use uuid::uuid;
     /// use git_manager::{GitHubRepo, GitReference, get_git_manager};
     ///
-    /// let repo = GitHubRepo::new("kittengrid", "deb-s3");
+    /// let repo = GitHubRepo::new("kittengrid", "deb-s3", "s3cretT0ken");
     /// let reference = GitReference::Branch("main".to_string());
     /// let uuid = uuid!("f37915a0-7195-11ed-a1eb-0242ac120010");
     ///
@@ -208,7 +206,7 @@ impl<'a> GitManager<'a> {
         let source_url = repo.target_url(self.data_dir);
         let target_dir = self.data_dir.work_path().unwrap().join(uuid.to_string());
 
-        self.builder()
+        self.builder(&repo.token())
             .bare(false)
             .clone_local(CloneLocal::Local)
             .branch(branch)
@@ -238,7 +236,7 @@ impl<'a> GitManager<'a> {
         let target_dir = self.data_dir.work_path().unwrap().join(uuid.to_string());
 
         match self
-            .builder()
+            .builder(&repo.token())
             .bare(false)
             .clone_local(CloneLocal::Local)
             .clone(&source_url, &target_dir)
@@ -266,11 +264,11 @@ impl<'a> GitManager<'a> {
     ///
     fn fetch(&self, branches: &[&str], repo: &impl RemoteRepo) -> Result<(), GitManagerCloneError> {
         let target_dir = repo.target_dir(self.data_dir);
-        let repo = git2::Repository::open(target_dir)?;
-        let mut remote = repo.find_remote("origin")?;
+        let git_repo = git2::Repository::open(target_dir)?;
+        let mut remote = git_repo.find_remote("origin")?;
         {
             let _guard = self.mutex.lock().unwrap();
-            remote.download(branches, Some(&mut fetch_options()))?;
+            remote.download(branches, Some(&mut fetch_options(&repo.token())))?;
             remote.update_tips(None, true, git2::AutotagOption::Unspecified, None)?;
         }
 
@@ -300,9 +298,11 @@ impl<'a> GitManager<'a> {
             );
             let mutex_guard = self.mutex.lock().unwrap();
 
+            let token = repo.token();
+
             result = self
-                .builder()
-                .fetch_options(fetch_options())
+                .builder(&repo.token())
+                .fetch_options(fetch_options(&token))
                 .with_checkout(CheckoutBuilder::new())
                 .bare(true)
                 .clone(&repo.url(), &target_dir);
@@ -361,25 +361,25 @@ impl<'a> GitManager<'a> {
 
     // This methos returns a Git2 repoBuilder with creds and settings prepared
     // for the agent
-    fn builder(&self) -> RepoBuilder {
+    fn builder(&self, token: &'a str) -> RepoBuilder {
         // Prepare clone options.
 
         let mut builder = git2::build::RepoBuilder::new();
-        builder.fetch_options(fetch_options());
+        builder.fetch_options(fetch_options(token));
 
         builder
     }
 }
 
 // Common options for fetching
-fn fetch_options() -> FetchOptions<'static> {
+fn fetch_options<'a>(token: &'a str) -> FetchOptions<'a> {
     let mut fetch_options = git2::FetchOptions::new();
 
     fetch_options.prune(git2::FetchPrune::On);
     fetch_options.download_tags(git2::AutotagOption::All);
     let mut callbacks = RemoteCallbacks::new();
     transfer_progress(&mut callbacks);
-    auth_callbacks(&mut callbacks);
+    auth_callbacks(token, &mut callbacks);
     update_tips(&mut callbacks);
     fetch_options.remote_callbacks(callbacks);
 
@@ -421,15 +421,9 @@ fn update_tips(callbacks: &mut RemoteCallbacks) {
     });
 }
 
-// @TODO: Deal with auth
-fn auth_callbacks(callbacks: &mut RemoteCallbacks) {
-    callbacks.credentials(|_url, username_from_url, _allowed_types| {
-        Cred::ssh_key(
-            username_from_url.unwrap(),
-            None,
-            Path::new(&format!("{}/.ssh/id_rsa", env::var("HOME").unwrap())),
-            None,
-        )
+fn auth_callbacks<'a>(token: &'a str, callbacks: &mut RemoteCallbacks<'a>) {
+    callbacks.credentials(move |_url, _username_from_url, _allowed_types| {
+        Cred::userpass_plaintext("oauth2", token)
     });
 }
 
@@ -442,6 +436,8 @@ pub trait RemoteRepo {
         format!("file://{}", self.target_dir(data_dir).to_str().unwrap())
     }
     fn url(&self) -> String;
+
+    fn token(&self) -> String;
 }
 
 // Repo from GitHub
@@ -449,13 +445,15 @@ pub trait RemoteRepo {
 pub struct GitHubRepo {
     user: String,
     repo: String,
+    token: String,
 }
 
 impl GitHubRepo {
-    pub fn new(user: &str, repo: &str) -> GitHubRepo {
+    pub fn new(user: &str, repo: &str, token: &str) -> GitHubRepo {
         GitHubRepo {
             user: user.to_string(),
             repo: repo.to_string(),
+            token: token.to_string(),
         }
     }
 }
@@ -472,6 +470,10 @@ impl RemoteRepo for GitHubRepo {
 
     fn url(&self) -> String {
         format!("https://github.com/{}/{}.git", self.user, self.repo)
+    }
+
+    fn token(&self) -> String {
+        format!("{}", self.token)
     }
 }
 
@@ -502,6 +504,10 @@ impl RemoteRepo for UrlRepo {
 
     fn url(&self) -> String {
         self.url.clone()
+    }
+
+    fn token(&self) -> String {
+        format!("{}", "")
     }
 }
 
@@ -659,6 +665,7 @@ mod test {
         let repo = GitHubRepo {
             user: String::from("kittengrid"),
             repo: String::from("deb-s3"),
+            token: String::from("token"),
         };
 
         let mut handles = std::vec::Vec::new();
@@ -692,6 +699,7 @@ mod test {
         let repo = GitHubRepo {
             user: String::from("kittengrid"),
             repo: String::from("deb-s3"),
+            token: String::from("token"),
         };
 
         let result = manager.download_remote_repository(&repo);
@@ -705,6 +713,7 @@ mod test {
         let repo = GitHubRepo {
             user: String::from("kittengrid"),
             repo: String::from("deb-s3"),
+            token: String::from("token"),
         };
 
         let manager = manager.git_manager().unwrap();
@@ -732,6 +741,7 @@ mod test {
         let repo = GitHubRepo {
             user: String::from("kittengrid"),
             repo: String::from("deb-s3"),
+            token: String::from("token"),
         };
         assert!(manager.download_remote_repository(&repo).is_ok());
     }
@@ -742,6 +752,7 @@ mod test {
         let repo = GitHubRepo {
             user: String::from("kittengrid()"),
             repo: String::from("I_DON_THINK_WE_WILL_EVER_HAVE_THIS_REPO"),
+            token: String::from("token"),
         };
 
         let manager = manager.git_manager().unwrap();
