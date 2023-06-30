@@ -6,5 +6,6 @@ Dockerfile
 !Cargo.toml
 !Cargo.lock
 !src
+!docker/entrypoint.sh
 !compose_rust
 

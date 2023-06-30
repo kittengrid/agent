@@ -42,9 +42,18 @@ RUN apt-get update -y \
     && apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin
 
 COPY --from=build /kittengrid-agent/target/release/kittengrid-agent /kittengrid-agent
-RUN groupadd -g 10001 kittengrid && \
-    useradd -r -u 10001 -g kittengrid kittengrid
-USER kittengrid
-EXPOSE 8000
-ENTRYPOINT ["/kittengrid-agent"]
-CMD ["--bind-address", "0.0.0.0", "--bind-port", "8000"]
+
+# KUMA
+ARG kuma_version=2.3.0
+RUN curl -L https://download.konghq.com/kuma-binaries-release/kuma-${kuma_version}-linux-amd64.tar.gz | tar -zx -C /opt/ \
+    && mv /opt/kuma-${kuma_version} /opt/kuma
+
+COPY docker/entrypoint.sh /
+RUN groupadd -g 10001 kittengrid \
+    && useradd -r -u 10001 -g kittengrid kittengrid \
+    && mkdir /home/kittengrid \
+    && chown kittengrid:kittengrid /home/kittengrid
+
+EXPOSE 65534
+ENTRYPOINT ["/entrypoint.sh"]
+
