@@ -378,8 +378,9 @@ fn fetch_options<'a>(token: Option<String>) -> FetchOptions<'a> {
     transfer_progress(&mut callbacks);
     if let Some(token) = token {
         auth_callbacks(token, &mut callbacks);
+    } else {
+        anonymous_auth_callbacks(&mut callbacks);
     }
-    anonymous_auth_callbacks(&mut callbacks);
     update_tips(&mut callbacks);
     fetch_options.remote_callbacks(callbacks);
 
