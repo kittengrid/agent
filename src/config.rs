@@ -11,6 +11,9 @@ static CONFIG: Lazy<Config> = Lazy::new(|| {
             work_directory: String::from("/tmp/test"),
             bind_address: String::from("127.0.0.1"),
             bind_port: 8000,
+            advertise_address: String::from("http://127.0.0.1:8000"),
+            agent_token: String::from("t0k3n"),
+            api_url: String::from("http://localhost:3001"),
         }
     } else {
         Config::parse()
@@ -41,6 +44,15 @@ pub struct Config {
 
     #[arg(long, default_value("3000"), env("BIND_PORT"))]
     pub bind_port: u16,
+
+    #[arg(long, default_value("http://127.0.0.1:8000/"), env("ADVERTISE_ADDRESS"))]
+    pub advertise_address: String,
+
+    #[arg(long, default_value("t0k3n"), env("AGENT_TOKEN"))]
+    pub agent_token: String,
+
+    #[arg(long, default_value("http://localhost:3001"), env("API_URL"))]
+    pub api_url: String,
 }
 
 #[cfg(test)]

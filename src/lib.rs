@@ -13,6 +13,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use log::debug;
 use std::net::TcpListener;
 
 use once_cell::sync::Lazy;
@@ -47,6 +48,32 @@ pub async fn launch(listener: TcpListener) {
         .serve(app.into_make_service())
         .await
         .unwrap();
+}
+
+// Makes a call to kittengrid API to register the agent advertise address
+// so we can communicate with it
+pub async fn publish_advertise_address(address: String, token: String, api_url: String) {
+    debug!("Publishing advertise address: {} to: {}", address, api_url);
+    let client = reqwest::Client::new();
+    let res = client
+        .post(format!("{}/api/agents/register", api_url))
+        .json(&serde_json::json!({ "address": address }))
+        .header("Authorization", format!("Bearer {}", token))
+        .send()
+        .await;
+
+    match res {
+        Ok(res) => {
+            if res.status().is_success() {
+                debug!("Advertise address published successfully");
+            } else {
+                debug!("Failed to publish advertise address: {}", res.status());
+            }
+        }
+        Err(e) => {
+            debug!("Failed to publish advertise address: {}", e);
+        }
+    }
 }
 
 #[cfg(test)]
