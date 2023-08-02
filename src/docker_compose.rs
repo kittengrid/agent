@@ -39,7 +39,7 @@ pub enum DockerComposeRunError {
 }
 
 // Struct that stores the result of a docker-compose ps call
-#[derive(Deserialize, Debug, Default)]
+#[derive(Deserialize, Serialize, Debug, Default)]
 #[serde(default, rename_all = "PascalCase")]
 pub struct DockerComposePsResult {
     pub command: String,
@@ -55,7 +55,7 @@ pub struct DockerComposePsResult {
 }
 
 // Needed by previous struct definition (publishers)
-#[derive(Deserialize, Debug, Default)]
+#[derive(Deserialize, Serialize, Debug, Default)]
 #[serde(default)]
 pub struct DockerComposePsPublisher {
     pub protocol: String,

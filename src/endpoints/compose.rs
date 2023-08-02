@@ -1,7 +1,7 @@
 use crate::agent_state;
 use crate::api_error::ApiError;
 use crate::compose::Context;
-use crate::docker_compose::DockerCompose;
+use crate::docker_compose::{DockerCompose, DockerComposePsResult};
 use crate::git_manager::{get_git_manager, GitHubRepo, GitReference};
 use crate::{compose, data_dir};
 use axum::{
@@ -36,6 +36,14 @@ pub struct CreateResponse {
     error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ServicesResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result: Option<Vec<DockerComposePsResult>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
 }
 
 /// POST /compose/
@@ -243,6 +251,94 @@ pub async fn show<'a>(AxumPath(id): AxumPath<String>) -> (StatusCode, impl IntoR
                     inner: None,
                 }),
             ),
+        }
+    }
+}
+
+/// GET /compose/:id/services
+///
+/// Returns the information about the current running services
+///
+/// # Arguments
+///
+///  * `id` - Id returned by create endpoint.
+///
+/// # Example
+///
+/// ```bash
+/// curl http://localhost:3000/compose/ID/services
+/// ```
+///
+/// # Response
+///
+/// ```bash
+///    HTTP/1.1 200 Ok
+///   {
+///     "result": [
+///       {
+///         "Command": "/http-echo -text 'hello world' -listen=:9000",
+///         "ExitCode": 0,
+///         "Health": "",
+///         "ID": "5f49cee60a2eaba1bb357711b0670d1d2505bc6c7c2dfc0c3974a2b0d6cc21c7",
+///         "Name": "0c7d862c-9b6e-4b61-a6eb-59c27e01469a-server-1",
+///         "Project": "0c7d862c-9b6e-4b61-a6eb-59c27e01469a",
+///         "Publishers": [
+///           {
+///             "protocol": "",
+///             "published_port": 0,
+///             "target_port": 0,
+///             "url": ""
+///           },
+///           {
+///             "protocol": "",
+///             "published_port": 0,
+///             "target_port": 0,
+///             "url": ""
+///            },
+///            {
+///              "protocol": "",
+///              "published_port": 0,
+///              "target_port": 0,
+///              "url": ""
+///            }
+///         ],
+///         "Service": "server",
+///         "State": "running"
+///       }
+///     ]
+///   }
+/// ```
+///
+pub async fn services<'a>(AxumPath(id): AxumPath<String>) -> (StatusCode, impl IntoResponse) {
+    let data_dir = data_dir::get_data_dir();
+    let wd = data_dir
+        .work_path()
+        .unwrap()
+        .join(Path::new(&id.to_string()));
+
+    match DockerCompose::new(data_dir) {
+        Ok(mut ok) => {
+            ok.cwd(wd.into_os_string().into_string().unwrap())
+                .compose_file(String::from("./docker-compose.yml"));
+
+            let output = ok.ps().unwrap();
+
+            return (
+                StatusCode::OK,
+                Json(ServicesResponse {
+                    error: None,
+                    result: Some(output),
+                }),
+            );
+        }
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ServicesResponse {
+                    result: None,
+                    error: Some(err.to_string()),
+                }),
+            )
         }
     }
 }

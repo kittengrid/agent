@@ -35,6 +35,7 @@ pub fn router() -> Router {
         .route("/sys/hello", get(endpoints::sys::hello))
         .route("/compose", post(endpoints::compose::create))
         .route("/compose/:id", get(endpoints::compose::show))
+        .route("/compose/:id/services", get(endpoints::compose::services))
 }
 
 pub async fn launch(listener: TcpListener) {
