@@ -8,6 +8,8 @@ async fn main() {
     let listener: TcpListener =
         TcpListener::bind(format!("{}:{}", config.bind_address, config.bind_port)).unwrap();
 
+    lib::expose_docker_engine_api();
+
     lib::publish_advertise_address(
         config.advertise_address.clone(),
         config.agent_token.clone(),

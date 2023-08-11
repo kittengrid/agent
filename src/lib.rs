@@ -76,5 +76,32 @@ pub async fn publish_advertise_address(address: String, token: String, api_url: 
     }
 }
 
+// Starts a container with the socat utility to expose the Docker Engine API through port 2376.
+// This is needed to be able to stream logs from the containers.
+pub fn expose_docker_engine_api() {
+    debug!("Exposing docker engine API");
+
+    if utils::is_port_in_use(2376) {
+        debug!("Docker engine API is already exposed");
+        return;
+    }
+
+    std::process::Command::new("docker")
+        .args(&[
+            "run",
+            "-d",
+            "--restart=always",
+            "-p",
+            "0.0.0.0:2376:2375",
+            "-v",
+            "/var/run/docker.sock:/var/run/docker.sock",
+            "alpine/socat",
+            "tcp-listen:2375,fork,reuseaddr",
+            "unix-connect:/var/run/docker.sock",
+        ])
+        .output()
+        .expect("Failed to expose docker engine API");
+}
+
 #[cfg(test)]
 mod test_utils;
