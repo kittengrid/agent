@@ -310,6 +310,46 @@ pub async fn show<'a>(AxumPath(id): AxumPath<String>) -> (StatusCode, impl IntoR
 /// ```
 ///
 pub async fn services<'a>(AxumPath(id): AxumPath<String>) -> (StatusCode, impl IntoResponse) {
+    let uid = match Uuid::parse_str(&id) {
+        Ok(uid) => uid,
+        Err(err) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ServicesResponse {
+                    error: Some(format!("Malformed Id: {}. Error: {}", id, err)),
+                    result: None,
+                }),
+            )
+        }
+    };
+
+    let hash = agent_state().read().unwrap();
+
+    let ctx = hash.get(&uid);
+
+    if ctx.is_none() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(ServicesResponse {
+                error: Some(format!("Not Found Id: {}", id)),
+                result: None,
+            }),
+        );
+    }
+
+    let paths = ctx.unwrap().paths().clone();
+    let path = paths.first();
+
+    if path.is_none() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(ServicesResponse {
+                error: Some(format!("Not Found Id: {}", id)),
+                result: None,
+            }),
+        );
+    }
+
     let data_dir = data_dir::get_data_dir();
     let wd = data_dir
         .work_path()
@@ -319,7 +359,7 @@ pub async fn services<'a>(AxumPath(id): AxumPath<String>) -> (StatusCode, impl I
     match DockerCompose::new(data_dir) {
         Ok(mut ok) => {
             ok.cwd(wd.into_os_string().into_string().unwrap())
-                .compose_file(String::from("./docker-compose.yml"));
+                .compose_file(String::from(path.unwrap()));
 
             let output = ok.ps().unwrap();
 
