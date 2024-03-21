@@ -1,8 +1,0 @@
-version: "3.9"
-services:
-  web:
-    entrypoint: /code/entrypoint.sh
-  redis:
-    entrypoint:
-      - test
-      - ok

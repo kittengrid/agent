@@ -1,12 +1,12 @@
-use std::net::TcpListener;
-
 use lib::config::get_config;
 
 #[tokio::main]
 async fn main() {
     let config = get_config();
-    let listener: TcpListener =
-        TcpListener::bind(format!("{}:{}", config.bind_address, config.bind_port)).unwrap();
+    let listener =
+        tokio::net::TcpListener::bind(format!("{}:{}", config.bind_address, config.bind_port))
+            .await
+            .unwrap();
 
     lib::publish_advertise_address(
         config.advertise_address.clone(),

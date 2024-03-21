@@ -35,23 +35,27 @@ pub struct Config {
         short,
         long,
         default_value("/var/lib/kittengrid-agent"),
-        env("WORK_DIR")
+        env("KG_WORK_DIR")
     )]
     pub work_directory: String,
 
-    #[arg(long, default_value("127.0.0.1"), env("BIND_ADDRESS"))]
+    #[arg(long, default_value("127.0.0.1"), env("KG_BIND_ADDRESS"))]
     pub bind_address: String,
 
-    #[arg(long, default_value("3000"), env("BIND_PORT"))]
+    #[arg(long, default_value("3000"), env("KG_BIND_PORT"))]
     pub bind_port: u16,
 
-    #[arg(long, default_value("http://127.0.0.1:8000/"), env("ADVERTISE_ADDRESS"))]
+    #[arg(
+        long,
+        default_value("http://127.0.0.1:8000/"),
+        env("KG_ADVERTISE_ADDRESS")
+    )]
     pub advertise_address: String,
 
-    #[arg(long, default_value("t0k3n"), env("AGENT_TOKEN"))]
+    #[arg(long, default_value("t0k3n"), env("KG_AGENT_TOKEN"))]
     pub agent_token: String,
 
-    #[arg(long, default_value("http://localhost:3001"), env("API_URL"))]
+    #[arg(long, default_value("http://localhost:3001"), env("KG_API_URL"))]
     pub api_url: String,
 }
 

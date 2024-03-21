@@ -8,10 +8,7 @@ pub async fn hello() -> &'static str {
 #[cfg(test)]
 mod test {
     use crate::test_utils::*;
-    use axum::{
-        body::Body,
-        http::{Request, StatusCode},
-    };
+    use axum::http::StatusCode;
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     async fn hello() {
@@ -19,17 +16,12 @@ mod test {
 
         let response = server_test
             .client
-            .request(
-                Request::builder()
-                    .uri(server_test.url_for("/sys/hello"))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .get(server_test.url_for("/sys/hello"))
+            .send()
             .await
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
-        let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
-        assert_eq!(&body[..], b"kitty");
+        assert_eq!(response.text().await.unwrap(), "kitty");
     }
 }
