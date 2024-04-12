@@ -1,19 +1,8 @@
 #[cfg(test)]
-use crate::data_dir::DataDir;
+use crate::launch;
 use log::debug;
-
 use std::process::Output;
 use std::{thread, time};
-use tempfile::{tempdir, TempDir};
-
-#[allow(dead_code)]
-pub fn temp_data_dir() -> (TempDir, DataDir) {
-    let directory = tempdir().unwrap();
-    let mut data_dir = DataDir::new(directory.path().to_path_buf());
-    data_dir.init().unwrap();
-
-    (directory, data_dir)
-}
 
 #[allow(dead_code)]
 pub fn debug_output(output: &Output) {
@@ -54,7 +43,7 @@ impl ServerTest {
         let port = listener.local_addr().unwrap().port();
         let client = reqwest::Client::new();
 
-        let guard = tokio::task::spawn(async move { crate::launch(listener).await });
+        let guard = tokio::task::spawn(async move { launch(listener).await });
         Self {
             guard,
             client,

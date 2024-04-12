@@ -3,6 +3,7 @@
 Dockerfile
 
 # Allow whitelisted files
+!docker/rootfs
 !Cargo.toml
 !Cargo.lock
 !src

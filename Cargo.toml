@@ -4,14 +4,13 @@ version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+name = "lib"
+path = "src/lib.rs"
 
 [[bin]]
 name = "kittengrid-agent"
 path = "src/main.rs"
-
-[lib]
-name = "lib"
-path = "src/lib.rs"
 
 [dependencies]
 log = "0.4"
@@ -30,6 +29,10 @@ url = "2.5"
 sha2 = "0.10"
 arc-swap = "1.7"
 reqwest = { version = "0.12", features = ["json"] }
+boringtun = { version = "0.6.0", features = ["device"] }
+tracing = "0.1.40"
+tracing-subscriber = "0.3.18"
+tracing-appender = "0.2.3"
 
 [dependencies.uuid]
 version = "1.1.2"

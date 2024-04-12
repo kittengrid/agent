@@ -14,6 +14,9 @@ static CONFIG: Lazy<Config> = Lazy::new(|| {
             advertise_address: String::from("http://127.0.0.1:8000"),
             agent_token: String::from("t0k3n"),
             api_url: String::from("http://localhost:3001"),
+            vcs_provider: String::from("github"),
+            vcs_id: String::from("1337"),
+            workflow_id: String::from("12345678"),
         }
     } else {
         Config::parse()
@@ -57,6 +60,15 @@ pub struct Config {
 
     #[arg(long, default_value("http://localhost:3001"), env("KG_API_URL"))]
     pub api_url: String,
+
+    #[arg(long, env("KG_VCS_PROVIDER"))]
+    pub vcs_provider: String,
+
+    #[arg(long, env("KG_VCS_ID"))]
+    pub vcs_id: String,
+
+    #[arg(long, env("KG_WORKFLOW_ID"))]
+    pub workflow_id: String,
 }
 
 #[cfg(test)]

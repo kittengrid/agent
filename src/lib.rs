@@ -5,7 +5,7 @@ mod api_error;
 pub mod config;
 pub mod data_dir;
 mod endpoints;
-mod utils;
+pub mod utils;
 use axum::{routing::get, Router};
 use log::debug;
 
@@ -28,8 +28,6 @@ pub fn router() -> Router {
 }
 
 pub async fn launch(listener: tokio::net::TcpListener) {
-    utils::initialize_logger();
-
     axum::serve(listener, router()).await.unwrap();
 }
 
