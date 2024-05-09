@@ -180,6 +180,8 @@ pub async fn process_api_status_error_from_response(res: reqwest::Response) -> K
 
 #[cfg(test)]
 mod test {
+    // We need to stub the API calls
+    #[ignore]
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     pub async fn from() {
         let kittengrid_api = crate::kittengrid_api::from_registration(crate::config::get_config())
@@ -189,6 +191,8 @@ mod test {
         assert!(!kittengrid_api.api_token.is_empty());
     }
 
+    // We need to stub the API calls
+    #[ignore]
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     async fn from_with_invalid_api_key() {
         let mut config = crate::config::get_config().clone();
@@ -216,6 +220,8 @@ mod test {
             .starts_with("Request failed"))
     }
 
+    // We need to stub the API calls
+    #[ignore]
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     async fn peers_create() {
         let kittengrid_api = crate::kittengrid_api::from_registration(crate::config::get_config())
@@ -225,6 +231,8 @@ mod test {
         assert!(!peers.is_empty());
     }
 
+    // We need to stub the API calls
+    #[ignore]
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     async fn peers_get_endpoint() {
         let kittengrid_api = crate::kittengrid_api::from_registration(crate::config::get_config())

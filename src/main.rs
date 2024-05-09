@@ -7,6 +7,7 @@ use std::process::exit;
 #[tokio::main]
 async fn main() {
     let config = get_config();
+
     lib::utils::initialize_logger();
     let listener =
         tokio::net::TcpListener::bind(format!("{}:{}", config.bind_address, config.bind_port))

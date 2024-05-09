@@ -1,25 +1,47 @@
-use clap::Parser;
-use log::LevelFilter;
+use clap_serde_derive::{
+    clap::{self, Parser},
+    ClapSerde,
+};
+use serde::Deserialize;
+
 use once_cell::sync::Lazy;
+use std::{fs::File, io::BufReader};
 
 // Returns a reference to a lazily created Config object.
 // TODO: FIX TESTS ARGUMENTS
 static CONFIG: Lazy<Config> = Lazy::new(|| {
     if cfg!(test) {
         Config {
-            log_level: LevelFilter::Error,
+            log_level: String::from("error"),
             work_directory: String::from("/tmp/test"),
             bind_address: String::from("127.0.0.1"),
             bind_port: 8000,
-            advertise_address: String::from("http://127.0.0.1:8000"),
             api_key: String::from("_some_token_"),
             api_url: String::from("http://web:3000"),
             vcs_provider: String::from("github"),
             vcs_id: String::from("1337"),
             workflow_id: String::from("12345678"),
+            services: vec![],
         }
     } else {
-        Config::parse()
+        let mut args = Args::parse();
+
+        if let Ok(f) = File::open(&args.config_path) {
+            // Parse config with serde
+            match serde_yaml::from_reader::<_, <Config as ClapSerde>::Opt>(BufReader::new(f)) {
+                // merge config already parsed from clap
+                Ok(config) => {
+                    let mut config = Config::from(config).merge(&mut args.config);
+                    config.set_defaults_if_missing();
+                    config
+                }
+
+                Err(err) => panic!("Error in configuration file:\n{}", err),
+            }
+        } else {
+            // If there is not config file return only config parsed from clap
+            Config::from(&mut args.config)
+        }
     }
 });
 
@@ -27,38 +49,60 @@ pub fn get_config() -> &'static Config {
     &CONFIG
 }
 
-#[derive(Parser, Debug, Clone)]
+// Inspiration from https://stackoverflow.com/questions/55133351/is-there-a-way-to-get-clap-to-use-default-values-from-a-file
+
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+pub struct Args {
+    /// Config file with configuration using yaml, values in this file will be superseeded by command line arguments that in turn will be superseeded by environment variables
+    #[clap(short, long = "config", default_value = "kittengrid.yml")]
+    config_path: std::path::PathBuf,
+
+    /// Rest of arguments
+    #[clap(flatten)]
+    pub config: <Config as ClapSerde>::Opt,
+}
+
+impl Config {
+    fn set_defaults_if_missing(&mut self) -> &mut Self {
+        if self.log_level.is_empty() {
+            self.log_level = "info".to_string();
+        }
+        if self.work_directory.is_empty() {
+            self.work_directory = "/var/lib/kittengrid-agent".to_string();
+        }
+        if self.bind_address.is_empty() {
+            self.bind_address = "127.0.0.1".to_string();
+        }
+        if self.bind_port == 0 {
+            self.bind_port = 3000;
+        }
+        self
+    }
+}
+
+#[derive(Parser, Debug, Clone, ClapSerde)]
 #[command(author, version, about, long_about = None)]
 pub struct Config {
     /// Log level (error, warn, info, debug and trace), defaults to info
-    #[arg(short, long, default_value("info"), env("LOG_LEVEL"))]
-    pub log_level: LevelFilter,
+    #[arg(short, long, env("LOG_LEVEL"))]
+    pub log_level: String,
 
-    #[arg(
-        short,
-        long,
-        default_value("/var/lib/kittengrid-agent"),
-        env("KG_WORK_DIR")
-    )]
+    #[arg(short, long, env("KG_WORK_DIR"))]
     pub work_directory: String,
 
-    #[arg(long, default_value("127.0.0.1"), env("KG_BIND_ADDRESS"))]
+    /// Bind address for the agent. [default: 127.0.0.1]
+    #[arg(long, env("KG_BIND_ADDRESS"))]
     pub bind_address: String,
 
-    #[arg(long, default_value("3000"), env("KG_BIND_PORT"))]
+    /// Bind port for the agent. [default: 3000]
+    #[arg(long, env("KG_BIND_PORT"))]
     pub bind_port: u16,
-
-    #[arg(
-        long,
-        default_value("http://127.0.0.1:8000/"),
-        env("KG_ADVERTISE_ADDRESS")
-    )]
-    pub advertise_address: String,
 
     #[arg(long, env("KG_API_KEY"))]
     pub api_key: String,
 
-    #[arg(long, default_value("https://kittengrid.com"), env("KG_API_URL"))]
+    #[arg(long, env("KG_API_URL"))]
     pub api_url: String,
 
     #[arg(long, env("KG_VCS_PROVIDER"))]
@@ -69,6 +113,16 @@ pub struct Config {
 
     #[arg(long, env("KG_WORKFLOW_ID"))]
     pub workflow_id: String,
+
+    #[clap(skip)]
+    pub services: Vec<ServiceDefinition>,
+}
+
+#[derive(Parser, Debug, Clone, Deserialize)]
+pub struct ServiceDefinition {
+    name: String,
+    address: String,
+    port: u16,
 }
 
 #[cfg(test)]

@@ -1,0 +1,9 @@
+log_level: info
+
+# Bind address
+# bind_address: 127.0.0.1
+
+services:
+  - name: server1
+    address: 127.0.0.1
+    port: 8000
