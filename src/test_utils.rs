@@ -1,5 +1,4 @@
-#[cfg(test)]
-use crate::launch;
+use super::launch;
 use log::debug;
 use std::process::Output;
 use std::{thread, time};

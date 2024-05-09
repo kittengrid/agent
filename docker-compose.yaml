@@ -10,6 +10,17 @@ services:
     stdin_open: true
     tty: true
     init: true
+    environment:
+      KG_API_KEY: "_some_token_"
+      KG_VCS_PROVIDER: github
+      KG_VCS_ID: 1337
+      KG_WORKFLOW_ID: 12345678
+      KG_API_URL: http://web:3000
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+
     networks:
       kittengrid:
     command: bash

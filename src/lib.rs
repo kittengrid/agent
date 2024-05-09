@@ -5,9 +5,13 @@ mod api_error;
 pub mod config;
 pub mod data_dir;
 mod endpoints;
+pub mod kittengrid_api;
 pub mod utils;
 use axum::{routing::get, Router};
 use log::debug;
+pub mod wireguard;
+
+extern crate alloc;
 
 use once_cell::sync::Lazy;
 
@@ -56,6 +60,5 @@ pub async fn publish_advertise_address(address: String, token: String, api_url: 
         }
     }
 }
-
 #[cfg(test)]
-mod test_utils;
+pub mod test_utils;

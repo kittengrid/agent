@@ -12,8 +12,8 @@ static CONFIG: Lazy<Config> = Lazy::new(|| {
             bind_address: String::from("127.0.0.1"),
             bind_port: 8000,
             advertise_address: String::from("http://127.0.0.1:8000"),
-            agent_token: String::from("t0k3n"),
-            api_url: String::from("http://localhost:3001"),
+            api_key: String::from("_some_token_"),
+            api_url: String::from("http://web:3000"),
             vcs_provider: String::from("github"),
             vcs_id: String::from("1337"),
             workflow_id: String::from("12345678"),
@@ -55,10 +55,10 @@ pub struct Config {
     )]
     pub advertise_address: String,
 
-    #[arg(long, default_value("t0k3n"), env("KG_AGENT_TOKEN"))]
-    pub agent_token: String,
+    #[arg(long, env("KG_API_KEY"))]
+    pub api_key: String,
 
-    #[arg(long, default_value("http://localhost:3001"), env("KG_API_URL"))]
+    #[arg(long, default_value("https://kittengrid.com"), env("KG_API_URL"))]
     pub api_url: String,
 
     #[arg(long, env("KG_VCS_PROVIDER"))]
