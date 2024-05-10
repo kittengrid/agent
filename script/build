@@ -27,7 +27,7 @@ done
 if [ -n "${CI}" ]; then
     DOCKER_BUILDKIT=1 docker buildx create --driver docker-container --use
 fi
-DOCKER_BUILDKIT=1 docker buildx build --target $TARGET $NO_CACHE -t $IMAGE:$SHA -f docker/Dockerfile \
+DOCKER_BUILDKIT=1 docker buildx build --progress plain --target $TARGET $NO_CACHE -t $IMAGE:$SHA -f docker/Dockerfile \
 		  --cache-from type=registry,ref=${IMAGE}:ci-cache-${BRANCH} \
 		  --cache-from type=registry,ref=${IMAGE}:ci-cache-main \
 		  --cache-to type=registry,ref=${IMAGE}:ci-cache-${BRANCH},mode=max \

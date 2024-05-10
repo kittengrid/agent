@@ -1,0 +1,35 @@
+
+services:
+  agent:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: dev
+    working_dir: /app
+    user: "${HOST_UID:?please set it to $(id -u) and rerun the command}:${HOST_GID:?please set it to $(id -g) and rerun the command}"
+    stdin_open: true
+    tty: true
+    init: true
+    environment:
+      KG_API_KEY: "_some_token_"
+      KG_VCS_PROVIDER: github
+      KG_VCS_ID: 1337
+      KG_WORKFLOW_ID: 12345678
+      KG_API_URL: http://web:3000
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+
+    networks:
+      kittengrid:
+    command: bash
+    volumes:
+      - .:/app
+      - ./tmp/home:/home/kittengrid
+      - ./docker/resolv.conf:/etc/resolv.conf
+
+networks:
+  kittengrid:
+    name: kittengrid_kittengrid
+    external: true

@@ -4,35 +4,44 @@ version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+name = "lib"
+path = "src/lib.rs"
 
 [[bin]]
 name = "kittengrid-agent"
 path = "src/main.rs"
 
-[lib]
-name = "lib"
-path = "src/lib.rs"
-
 [dependencies]
 log = "0.4"
-clap = { version = "4.0.10", features = ["derive", "env"] }
+clap = { version = "4.5.3", features = ["derive", "env"] }
+clap-serde-derive = "0.2.1"
 env_logger = "0.9"
-axum = "0.6.7"
-axum-extra = "0.5.0"
-hyper = "0.14.23"
+axum = "0.7.4"
+axum-extra = "0.9.2"
 
-serde = { version = "1.0", features = ["derive", "rc"] }
-serde_json = "1.0.83"
-git2 = "0.15.0"
+serde = { version = "1.0.197", features = ["derive", "rc"] }
+serde_json = "1.0.114"
+serde_yaml = "0.9.34"
 tokio = { version = "1", features = ["full"] }
-compose_rust = { path = "./compose_rust" }
-once_cell = "1.17"
+once_cell = "1.19"
 thiserror = "1.0"
-tempfile = "3.3.0"
-url = "2.3.1"
-sha2 = "0.10.6"
-arc-swap = "1.6.0"
-reqwest = { version = "0.11.18", features = ["json"] }
+tempfile = "3.10"
+url = "2.5"
+sha2 = "0.10"
+arc-swap = "1.7"
+reqwest = { version = "0.12", features = ["json"] }
+boringtun = { version = "0.6.0", features = ["device"] }
+tracing = "0.1.40"
+tracing-subscriber = "0.3.18"
+tracing-appender = "0.2.3"
+base64 = "0.22.1"
+rtnetlink = "0.14.1"
+futures = "0.3.11"
+wireguard-rs   = { git = "https://github.com/kittengrid/wireguard-rs.git" }
+
+[dependencies.x25519-dalek]
+version = "^1.1"
 
 [dependencies.uuid]
 version = "1.1.2"
