@@ -85,30 +85,30 @@ pub struct Config {
     #[arg(short, long, env("LOG_LEVEL"))]
     pub log_level: String,
 
-    #[arg(short, long, env("KG_WORK_DIR"))]
+    #[arg(short, long, env("KITTENGRID_WORK_DIR"))]
     pub work_directory: String,
 
     /// Bind address for the agent. [default: 127.0.0.1]
-    #[arg(long, env("KG_BIND_ADDRESS"))]
+    #[arg(long, env("KITTENGRID_BIND_ADDRESS"))]
     pub bind_address: String,
 
     /// Bind port for the agent. [default: 3000]
-    #[arg(long, env("KG_BIND_PORT"))]
+    #[arg(long, env("KITTENGRID_BIND_PORT"))]
     pub bind_port: u16,
 
-    #[arg(long, env("KG_API_KEY"))]
+    #[arg(long, env("KITTENGRID_API_KEY"))]
     pub api_key: String,
 
-    #[arg(long, env("KG_API_URL"))]
+    #[arg(long, env("KITTENGRID_API_URL"))]
     pub api_url: String,
 
-    #[arg(long, env("KG_VCS_PROVIDER"))]
+    #[arg(long, env("KITTENGRID_VCS_PROVIDER"))]
     pub vcs_provider: String,
 
-    #[arg(long, env("KG_VCS_ID"))]
+    #[arg(long, env("KITTENGRID_VCS_ID"))]
     pub vcs_id: String,
 
-    #[arg(long, env("KG_WORKFLOW_ID"))]
+    #[arg(long, env("KITTENGRID_WORKFLOW_ID"))]
     pub workflow_id: String,
 
     #[clap(skip)]
