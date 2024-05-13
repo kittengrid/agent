@@ -26,22 +26,19 @@ static CONFIG: Lazy<Config> = Lazy::new(|| {
     } else {
         let mut args = Args::parse();
 
-        if let Ok(f) = File::open(&args.config_path) {
+        let mut config = if let Ok(f) = File::open(&args.config_path) {
             // Parse config with serde
             match serde_yaml::from_reader::<_, <Config as ClapSerde>::Opt>(BufReader::new(f)) {
                 // merge config already parsed from clap
-                Ok(config) => {
-                    let mut config = Config::from(config).merge(&mut args.config);
-                    config.set_defaults_if_missing();
-                    config
-                }
-
+                Ok(config) => Config::from(config).merge(&mut args.config),
                 Err(err) => panic!("Error in configuration file:\n{}", err),
             }
         } else {
             // If there is not config file return only config parsed from clap
             Config::from(&mut args.config)
-        }
+        };
+        config.set_defaults_if_missing();
+        config
     }
 });
 
