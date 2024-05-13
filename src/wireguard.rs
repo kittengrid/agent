@@ -1,6 +1,7 @@
 use crate::kittengrid_api::Endpoint;
 use base64::{engine::general_purpose, Engine as _};
 use futures::stream::TryStreamExt;
+use log::error;
 use rtnetlink::new_connection;
 use std::{net::ToSocketAddrs, thread};
 
@@ -106,17 +107,15 @@ impl WireGuard {
             .decode(peer.private_key())
             .unwrap();
         let bytes: [u8; 32] = privkey_bytes.as_slice().try_into().unwrap();
-
         self.config
             .set_private_key(Some(x25519_dalek::StaticSecret::from(bytes)));
         self.config.set_listen_port(PORT_BASE + self.index as u16)?;
-
         let endpoint_pub_key = general_purpose::STANDARD
             .decode(endpoint.public_key())
             .unwrap();
+
         let bytes: [u8; 32] = endpoint_pub_key.as_slice().try_into().unwrap();
         let public_key = x25519_dalek::PublicKey::from(bytes);
-
         self.config.add_peer(&public_key);
 
         let endpoint_addr = endpoint
@@ -126,13 +125,11 @@ impl WireGuard {
             .unwrap()
             .next()
             .unwrap();
-
         self.config.set_endpoint(&public_key, endpoint_addr);
 
         let network = endpoint.network();
         let allowed_ips_net = network.split('/').collect::<Vec<&str>>()[0];
         let allowed_ips_cidr = network.split('/').collect::<Vec<&str>>()[1];
-
         self.config.add_allowed_ip(
             &public_key,
             allowed_ips_net.parse().unwrap(),
@@ -144,16 +141,21 @@ impl WireGuard {
         // set up ip address
         let (connection, handle, _) = new_connection().unwrap();
         tokio::spawn(connection);
+
         let ip_addr = peer.address();
         let mut links = handle.link().get().match_name(self.name()).execute();
-
-        if let Some(link) = links.try_next().await? {
-            handle
-                .address()
-                .add(link.header.index, ip_addr.into(), allowed_ips_cidr.parse()?)
-                .execute()
-                .await?;
-            handle.link().set(link.header.index).up().execute().await?;
+        match links.try_next().await {
+            Ok(Some(link)) => {
+                handle
+                    .address()
+                    .add(link.header.index, ip_addr.into(), allowed_ips_cidr.parse()?)
+                    .execute()
+                    .await?;
+                handle.link().set(link.header.index).up().execute().await?;
+            }
+            _ => {
+                error!("no link found");
+            }
         }
 
         Ok(())

@@ -1,14 +1,15 @@
 use lib::config::get_config;
 use lib::wireguard::WireGuard;
-use log::{error, info};
+use log::{debug, error, info};
 
 use std::process::exit;
 
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread", worker_threads = 20)]
 async fn main() {
     let config = get_config();
 
     lib::utils::initialize_logger();
+    debug!("Config read: {:?}", config);
     let listener =
         tokio::net::TcpListener::bind(format!("{}:{}", config.bind_address, config.bind_port))
             .await
