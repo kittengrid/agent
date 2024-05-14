@@ -11,11 +11,11 @@ services:
     tty: true
     init: true
     environment:
-      KG_API_KEY: "_some_token_"
-      KG_VCS_PROVIDER: github
-      KG_VCS_ID: 1337
-      KG_WORKFLOW_ID: 12345678
-      KG_API_URL: http://web:3000
+      KITTENGRID_API_KEY: "_some_token_"
+      KITTENGRID_VCS_PROVIDER: github
+      KITTENGRID_VCS_ID: 1337
+      KITTENGRID_WORKFLOW_ID: 12345678
+      KITTENGRID_API_URL: http://web:3000
     cap_add:
       - NET_ADMIN
     devices:
