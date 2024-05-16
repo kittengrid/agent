@@ -8,6 +8,8 @@ mod endpoints;
 pub mod kittengrid_api;
 pub mod utils;
 use axum::{routing::get, Router};
+pub mod persisted_buf_reader_broadcaster;
+pub mod service;
 pub mod wireguard;
 
 extern crate alloc;
@@ -17,13 +19,13 @@ use once_cell::sync::Lazy;
 extern crate log;
 use std::sync::{Arc, RwLock};
 
-pub type AgentState<'a> = Arc<RwLock<HashMap<Uuid, i32>>>;
-static AGENT_STATE: Lazy<AgentState> =
-    Lazy::new(|| Arc::new(RwLock::new(HashMap::<Uuid, i32>::new())));
+pub type Services<'a> = Arc<RwLock<HashMap<String, service::Service>>>;
+static SERVICES: Lazy<Services> =
+    Lazy::new(|| Arc::new(RwLock::new(HashMap::<String, service::Service>::new())));
 
 /// Returns the agent state
-pub fn agent_state() -> &'static AgentState<'static> {
-    &AGENT_STATE
+pub fn services() -> &'static Services<'static> {
+    &SERVICES
 }
 
 pub fn router() -> Router {

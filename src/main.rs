@@ -70,19 +70,53 @@ async fn main() {
             device.wait();
         });
     }
-    info!("All interfaces started, launching the web server.");
 
-    // Register with API
-    match kg_api.peers_create_service(String::from("kittengrid-agent"), 4747, String::from("/sys/hello")).await {
-        Ok(api) => {
-            info!("Successfully registered with kittengrid api");
-            api
+    info!("All interfaces up. Spawning services.");
+    let services = lib::services();
+    for service in config.services.iter() {
+        let name = service.name.clone();
+        let mut service: lib::service::Service = service.clone().into();
+
+        info!("Spawning service: {}", name);
+        match service.spawn().await {
+            Ok(_) => {
+                info!("Successfully spawned service: {}", name);
+            }
+            Err(e) => {
+                error!("Failed to spawn service: {}", e);
+                exit(1);
+            }
         }
-        Err(e) => {
-            error!("Failed to register with kittengrid api: {}", e);
-            exit(1);
+
+        // Register with API
+        match kg_api
+            .peers_create_service(
+                service.name(),
+                service.port(),
+                service.health_check().unwrap().path.unwrap(),
+            )
+            .await
+        {
+            Ok(api) => {
+                info!("Successfully registered with kittengrid api");
+                api
+            }
+            Err(e) => {
+                error!("Failed to register with kittengrid api: {}", e);
+                exit(1);
+            }
+        };
+
+        match (*services).write() {
+            Ok(mut services) => {
+                (*services).insert(name, service);
+            }
+            Err(e) => {
+                error!("Failed to add service to state: {}", e);
+                exit(1);
+            }
         }
-    };
+    }
 
     lib::launch(listener).await;
 }

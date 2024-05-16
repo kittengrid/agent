@@ -5,7 +5,7 @@ use clap_serde_derive::{
 use serde::Deserialize;
 
 use once_cell::sync::Lazy;
-use std::{fs::File, io::BufReader};
+use std::{collections::HashMap, fs::File, io::BufReader};
 
 // Returns a reference to a lazily created Config object.
 // TODO: FIX TESTS ARGUMENTS
@@ -112,14 +112,25 @@ pub struct Config {
     pub workflow_id: String,
 
     #[clap(skip)]
-    pub services: Vec<ServiceDefinition>,
+    pub services: Vec<ServiceConfig>,
 }
 
-#[derive(Parser, Debug, Clone, Deserialize)]
-pub struct ServiceDefinition {
-    name: String,
-    address: String,
-    port: u16,
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ServiceConfig {
+    pub name: String,
+    pub port: u16,
+    pub cmd: Option<String>,
+    pub env: Option<HashMap<String, String>>,
+    pub args: Option<Vec<String>>,
+    pub health_check: Option<HealthCheck>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct HealthCheck {
+    pub interval: Option<u64>,
+    pub timeout: Option<u64>,
+    pub retries: Option<u64>,
+    pub path: Option<String>,
 }
 
 #[cfg(test)]
