@@ -71,5 +71,18 @@ async fn main() {
         });
     }
     info!("All interfaces started, launching the web server.");
+
+    // Register with API
+    match kg_api.peers_create_service(String::from("kittengrid-agent"), 4747, String::from("/sys/hello")).await {
+        Ok(api) => {
+            info!("Successfully registered with kittengrid api");
+            api
+        }
+        Err(e) => {
+            error!("Failed to register with kittengrid api: {}", e);
+            exit(1);
+        }
+    };
+
     lib::launch(listener).await;
 }
