@@ -35,6 +35,9 @@ impl ServerTest {
     pub fn url_for(&self, path: &str) -> String {
         format!("http://{}:{}{}", self.addr, self.port, path)
     }
+    pub fn url_for_with_protocol(&self, protocol: &str, path: &str) -> String {
+        format!("{}://{}:{}{}", protocol, self.addr, self.port, path)
+    }
 
     pub async fn new() -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

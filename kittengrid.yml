@@ -1,0 +1,7 @@
+services:
+  - name: test
+    cmd: bash'
+    port: 8080
+    args:
+      - -c
+      - while [ true ] ; do head -c 200 /dev/random|base64 -w 0 ; printf '\n'; sleep 1; done

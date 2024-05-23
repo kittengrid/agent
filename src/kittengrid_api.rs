@@ -135,14 +135,21 @@ impl KittengridApi {
         }
     }
 
-    pub async fn peers_create_service(&self, name: String, port: u16, path: String) -> Result<(), KittengridApiError> {
+    pub async fn peers_create_service(
+        &self,
+        name: String,
+        port: u16,
+        path: String,
+    ) -> Result<(), KittengridApiError> {
         let res = self
             .post("api/peers/service")
             .json(&serde_json::json!({
                 "port": port,
                 "path": path,
                 "name": name
-            })).send().await;
+            }))
+            .send()
+            .await;
         match res {
             Ok(res) => {
                 if res.status().is_success() {

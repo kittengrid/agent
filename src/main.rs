@@ -7,6 +7,7 @@ use std::process::exit;
 #[tokio::main(flavor = "multi_thread", worker_threads = 20)]
 async fn main() {
     let config = get_config();
+    println!("Starting kittengrid with config: {:?}", config);
 
     lib::utils::initialize_logger();
     debug!("Config read: {:?}", config);
@@ -89,12 +90,11 @@ async fn main() {
         }
 
         // Register with API
+        let health_check = service.health_check().unwrap();
+        let path = health_check.path.unwrap();
+
         match kg_api
-            .peers_create_service(
-                service.name(),
-                service.port(),
-                service.health_check().unwrap().path.unwrap(),
-            )
+            .peers_create_service(service.name(), service.port(), path)
             .await
         {
             Ok(api) => {
@@ -107,15 +107,8 @@ async fn main() {
             }
         };
 
-        match (*services).write() {
-            Ok(mut services) => {
-                (*services).insert(name, service);
-            }
-            Err(e) => {
-                error!("Failed to add service to state: {}", e);
-                exit(1);
-            }
-        }
+        let mut services = (*services).write().unwrap();
+        (*services).insert(name, service);
     }
 
     lib::launch(listener).await;

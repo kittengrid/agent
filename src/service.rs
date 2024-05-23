@@ -1,8 +1,7 @@
 use super::persisted_buf_reader_broadcaster::PersistedBufReaderBroadcaster;
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader};
-use std::process::{Child, ChildStderr, ChildStdout, Command};
-use tokio::sync::mpsc::{Receiver, Sender};
+use std::io::BufReader;
+use std::process::{Child, Command};
 
 use crate::config;
 
@@ -15,7 +14,6 @@ pub struct Service {
     env: HashMap<String, String>,
     stdout: Option<PersistedBufReaderBroadcaster>,
     port: u16,
-    wait_handler: Option<tokio::task::JoinHandle<()>>,
     health_check: Option<config::HealthCheck>,
 }
 
@@ -24,8 +22,8 @@ impl From<config::ServiceConfig> for Service {
         Self {
             name: config.name.clone(),
             port: config.port,
-            env: config.env.unwrap_or(HashMap::new()),
-            args: config.args.unwrap_or(vec![]),
+            env: config.env.unwrap_or_default(),
+            args: config.args.unwrap_or_default(),
             cmd: config.cmd.unwrap_or(config.name),
             health_check: config.health_check,
             ..Default::default()
@@ -34,8 +32,8 @@ impl From<config::ServiceConfig> for Service {
 }
 
 impl Service {
-    pub async fn stdout_receiver(&self) -> Receiver<String> {
-        self.stdout.as_ref().unwrap().receiver().await
+    pub fn stdout(&self) -> Option<PersistedBufReaderBroadcaster> {
+        self.stdout.clone()
     }
 
     pub fn name(&self) -> String {
@@ -46,7 +44,7 @@ impl Service {
         self.port
     }
 
-    pub fn health_check(self) -> Option<config::HealthCheck> {
+    pub fn health_check(&self) -> Option<config::HealthCheck> {
         self.health_check.clone()
     }
 
@@ -67,9 +65,6 @@ impl Service {
 
 #[cfg(test)]
 mod test {
-    use std::io::Read;
-
-    use crate::test_utils::sleep;
 
     use super::*;
 
@@ -77,19 +72,19 @@ mod test {
     fn from() {
         let mut config = config::ServiceConfig {
             name: "test".to_string(),
-            port: Some(8080),
+            port: 8080,
             cmd: Some("test".to_string()),
             args: Some(vec!["--port".to_string()]),
             env: Some(HashMap::new()),
+            ..Default::default()
         };
         let service = Service::from(config.clone());
         assert_eq!(service.name, "test");
-        assert_eq!(service.port, Some(8080));
+        assert_eq!(service.port, 8080);
         assert_eq!(service.cmd, "test");
         assert_eq!(service.args, vec!["--port".to_string()]);
         assert_eq!(service.env, HashMap::new());
         assert!(service.child.is_none());
-        assert!(service.wait_handler.is_none());
 
         // Assert we use the name as default command
         config.cmd = None;
@@ -109,21 +104,13 @@ mod test {
 
         assert!(result.is_ok());
         let p = tokio::spawn({
-            let mut receiver = service.stdout_receiver().await;
-            async move {
-                while let Some(data) = receiver.recv().await {
-                    println!("1: {}", data);
-                }
-            }
+            let mut receiver = service.stdout().unwrap().subscribe().await;
+            async move { while let Some(_data) = receiver.recv().await {} }
         });
 
         let j = tokio::spawn({
-            let mut receiver = service.stdout_receiver().await;
-            async move {
-                while let Some(data) = receiver.recv().await {
-                    println!("2: {}", data);
-                }
-            }
+            let mut receiver = service.stdout().unwrap().subscribe().await;
+            async move { while let Some(_data) = receiver.recv().await {} }
         });
 
         p.await.unwrap();
