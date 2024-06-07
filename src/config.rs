@@ -82,7 +82,7 @@ impl Config {
 #[command(author, version, about, long_about = None)]
 pub struct Config {
     /// Log level (error, warn, info, debug and trace), defaults to info
-    #[arg(short, long, env("LOG_LEVEL"))]
+    #[arg(short, long, env("KITTENGRID_LOG_LEVEL"))]
     pub log_level: String,
 
     #[arg(short, long, env("KITTENGRID_WORK_DIR"))]
