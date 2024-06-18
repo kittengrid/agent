@@ -1,7 +1,14 @@
 use crate::config::get_config;
 use std::str::FromStr;
 use std::sync::Once;
+use std::{thread, time};
 static INIT_LOGGER: Once = Once::new();
+
+#[allow(dead_code)]
+pub fn sleep(secs: u64) {
+    let secs = time::Duration::from_secs(secs);
+    thread::sleep(secs);
+}
 
 pub fn initialize_logger() {
     let config = get_config();

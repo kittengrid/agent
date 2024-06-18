@@ -1,7 +1,18 @@
+work_directory: /tmp/test
+bind_address: 127.0.0.1
+bind_port: 8000
+api_key: _some_token_
+api_url: http://web:3000
+vcs_provider: github
+vcs_id: 1337
+workflow_id: 12345678"
+
 services:
   - name: test
-    cmd: bash'
+    cmd: target/debug/log-generator
     port: 8080
     args:
-      - -c
-      - while [ true ] ; do head -c 200 /dev/random|base64 -w 0 ; printf '\n'; sleep 1; done
+      - -b
+      - 4
+      - -s
+      - 1000

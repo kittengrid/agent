@@ -1,10 +1,17 @@
+use crate::service::{ServiceStream, Services};
+
 use axum::{
-    extract::ws::{Message, WebSocket, WebSocketUpgrade},
-    extract::Path,
-    response::IntoResponse,
+    body::Body,
+    extract::{
+        ws::{Message, WebSocket, WebSocketUpgrade},
+        Path, State,
+    },
+    http::{Response, StatusCode},
+    response::{IntoResponse, Json},
 };
-use log::debug;
-use std::borrow::Cow;
+use log::{debug, error, info};
+use serde_json::json;
+use std::{borrow::Cow, sync::Arc};
 
 use std::net::SocketAddr;
 
@@ -12,201 +19,288 @@ use std::net::SocketAddr;
 use axum::extract::connect_info::ConnectInfo;
 use axum::extract::ws::CloseFrame;
 
-//allows to split the websocket stream into separate TX and RX branches
-use futures::{sink::SinkExt, stream::StreamExt};
+/// POST /services/:service_name/start
+///
+/// Description: Starts the service by its name (404  if not found)
+#[axum::debug_handler]
+pub async fn start(
+    Path(service_name): Path<String>,
+    State(services): State<Arc<Services>>,
+) -> impl IntoResponse {
+    if services.fetch(&service_name).await.is_none() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "error": "Service not found"
+            })),
+        );
+    }
 
-// GET /services/:service_name/stdout
-//
-// Description: Returns the cutiest Http response
+    match services.start_service(&service_name).await {
+        Ok(_) => (
+            StatusCode::OK,
+            Json(json!({
+              "status": "ok"
+            })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": format!("{}", e)
+            })),
+        ),
+    }
+}
+
+/// POST /services/:service_name/stop
+///
+/// Description: Stops the service by its name (404  if not found)
+#[axum::debug_handler]
+pub async fn stop(
+    Path(service_name): Path<String>,
+    State(services): State<Arc<Services>>,
+) -> impl IntoResponse {
+    if services.fetch(&service_name).await.is_none() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "error": "Service not found"
+            })),
+        );
+    }
+
+    match services.stop_service(&service_name).await {
+        Ok(_) => (
+            StatusCode::OK,
+            Json(json!({
+              "status": "ok"
+            })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": format!("{}", e)
+            })),
+        ),
+    }
+}
+
+/// GET /services/:service_name/stdout
+///
+/// Description: Connects to the stdout of the service by its name (404  if not found)
 pub async fn stdout(
     Path(service_name): Path<String>,
+    State(services): State<Arc<Services>>,
     ws: WebSocketUpgrade,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> impl IntoResponse {
-    println!("{service_name} connected.");
-    // finalize the upgrade process by returning upgrade callback.
-    // we can customize the callback by sending additional info such as address.
-    ws.on_upgrade(move |socket| handle_socket(socket, addr, service_name.clone()))
+    if services.fetch(&service_name).await.is_none() {
+        return Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({"error": "Service not found"}).to_string(),
+            ))
+            .unwrap();
+    }
+
+    ws.on_upgrade(move |socket| {
+        handle_socket(
+            socket,
+            addr,
+            service_name.clone(),
+            services,
+            ServiceStream::Stdout,
+        )
+    })
+}
+
+/// GET /services/:service_name/stderr
+///
+/// Description: Connects to the stderr of the service by its name (404  if not found)
+pub async fn stderr(
+    Path(service_name): Path<String>,
+    State(services): State<Arc<Services>>,
+    ws: WebSocketUpgrade,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+) -> impl IntoResponse {
+    if services.fetch(&service_name).await.is_none() {
+        return Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({"error": "Service not found"}).to_string(),
+            ))
+            .unwrap();
+    }
+
+    ws.on_upgrade(move |socket| {
+        handle_socket(
+            socket,
+            addr,
+            service_name.clone(),
+            services,
+            ServiceStream::Stderr,
+        )
+    })
 }
 
 /// Actual websocket statemachine (one will be spawned per connection)
-async fn handle_socket(mut socket: WebSocket, who: SocketAddr, service_name: String) {
-    let stdout = match crate::stdout_receiver_for_service(&service_name).await {
-        None => {
-            debug!("Service {service_name} not found.");
-            return;
-        }
-        Some(receiver) => receiver,
-    };
-
-    // send a ping (unsupported by some browsers) just to kick things off and get a response
-    if socket.send(Message::Ping(vec![1, 2, 3])).await.is_ok() {
-        println!("Pinged {who}...");
-    } else {
-        println!("Could not send ping {who}!");
-        // no Error here since the only thing we can do is to close the connection.
-        // If we can not send messages, there is no way to salvage the statemachine anyway.
-        return;
-    }
-
-    // By splitting socket we can send and receive at the same time. In this example we will send
-    // unsolicited messages to client based on some sort of server's internal event (i.e .timer).
-    let (mut sender, _) = socket.split();
-    let mut receiver = stdout.subscribe().await;
-
-    // Spawn a task that will push several messages to the client (does not matter what client does)
-    tokio::spawn(async move {
-        while let Some(data) = receiver.recv().await {
-            let data = std::str::from_utf8(&data).unwrap();
-
-            if sender.send(Message::Text(data.to_string())).await.is_err() {
+async fn handle_socket(
+    mut socket: WebSocket,
+    address: SocketAddr,
+    service_name: String,
+    services: Arc<crate::service::Services>,
+    stream: ServiceStream,
+) {
+    let mut stream_channel_receiver =
+        match services.subscribe_to_stream(&service_name, stream).await {
+            Some(receiver) => receiver,
+            None => {
+                error!("Could not subscribe to {service_name} {stream} channel");
                 return;
             }
-        }
-
-        println!("Sending close to {who}...");
-        if let Err(e) = sender
-            .send(Message::Close(Some(CloseFrame {
-                code: axum::extract::ws::close_code::NORMAL,
-                reason: Cow::from("Goodbye"),
-            })))
-            .await
-        {
-            println!("Could not send close to {who}! {e}");
         };
-    });
 
-    // returning from the handler closes the websocket connection
-    println!("Websocket context {who} destroyed");
+    while let Some(data) = stream_channel_receiver.recv().await {
+        info!("Received data from {service_name}:");
+
+        if socket.send(Message::Binary(data.to_vec())).await.is_err() {
+            error!("Could not send data to {address}!");
+            break;
+        }
+    }
+
+    debug!("Closing {address}...");
+    if let Err(e) = socket
+        .send(Message::Close(Some(CloseFrame {
+            code: axum::extract::ws::close_code::NORMAL,
+            reason: Cow::from("Closed by server"),
+        })))
+        .await
+    {
+        error!("Could not send close to {address}! {e}");
+    };
 }
 
 #[cfg(test)]
 mod test {
     use crate::test_utils::*;
-    use futures_util::{SinkExt, StreamExt};
-    use std::borrow::Cow;
-    use std::ops::ControlFlow;
+    use futures_util::StreamExt;
+    use log::debug;
 
+    use reqwest::StatusCode;
     // we will use tungstenite for websocket client impl (same library as what axum is using)
-    use tokio_tungstenite::{
-        connect_async,
-        tungstenite::protocol::{frame::coding::CloseCode, CloseFrame, Message},
-    };
+    use tokio_tungstenite::connect_async;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+    async fn stdout_bad() {
+        initialize_tests();
+        let server_test = ServerTest::new(true).await;
+        let ws_stream = connect_async(
+            server_test.url_for_with_protocol("ws", "/services/_I_AM_NOT_A_SERVICE/stdout"),
+        )
+        .await;
+        assert!(ws_stream.is_err());
+        server_test.services().stop().await.unwrap();
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     async fn stdout() {
-        let server_test = ServerTest::new().await;
-        let who = 10;
+        initialize_tests();
+        let server_test = ServerTest::new(true).await;
         let ws_stream =
             match connect_async(server_test.url_for_with_protocol("ws", "/services/test/stdout"))
                 .await
             {
-                Ok((stream, response)) => {
-                    println!("Handshake for client {who} has been completed");
-                    // This will be the HTTP response, same as with server this is the last moment we
-                    // can still access HTTP stuff.
-                    println!("Server response was {response:?}");
-                    stream
-                }
-                Err(e) => {
-                    println!("WebSocket handshake for client {who} failed with {e}!");
-                    return;
+                Ok((stream, _)) => stream,
+                Err(_) => {
+                    panic!("Could not connect to server");
                 }
             };
 
-        let (mut sender, mut receiver) = ws_stream.split();
+        let (_, mut receiver) = ws_stream.split();
 
-        //we can ping the server for start
-        sender
-            .send(Message::Ping("Hello, Server!".into()))
-            .await
-            .expect("Can not send!");
-
-        //spawn an async sender to push some more messages into the server
-        let mut send_task = tokio::spawn(async move {
-            for i in 1..30 {
-                // In any websocket error, break loop.
-                if sender
-                    .send(Message::Text(format!("Message number {i}...")))
-                    .await
-                    .is_err()
-                {
-                    //just as with server, if send fails there is nothing we can do but exit.
-                    return;
-                }
-
-                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-            }
-
-            // When we are done we may want our client to close connection cleanly.
-            println!("Sending close to {who}...");
-            if let Err(e) = sender
-                .send(Message::Close(Some(CloseFrame {
-                    code: CloseCode::Normal,
-                    reason: Cow::from("Goodbye"),
-                })))
-                .await
-            {
-                println!("Could not send Close due to {e:?}, probably it is ok?");
-            };
-        });
-
-        //receiver just prints whatever it gets
-        let mut recv_task = tokio::spawn(async move {
-            while let Some(Ok(msg)) = receiver.next().await {
-                // print message and break if instructed to do so
-                if process_message(msg, who).is_break() {
-                    break;
-                }
-            }
-        });
-
-        //wait for either task to finish and kill the other task
-        tokio::select! {
-            _ = (&mut send_task) => {
-                recv_task.abort();
-            },
-            _ = (&mut recv_task) => {
-                send_task.abort();
-            }
-        }
+        assert!(receiver.next().await.is_some());
+        assert!(receiver.next().await.is_some());
+        server_test.services().stop().await.unwrap();
     }
 
-    /// Function to handle messages we get (with a slight twist that Frame variant is visible
-    /// since we are working with the underlying tungstenite library directly without axum here).
-    fn process_message(msg: Message, who: usize) -> ControlFlow<(), ()> {
-        match msg {
-            Message::Text(t) => {
-                println!(">>> {who} got str: {t:?}");
-            }
-            Message::Binary(d) => {
-                println!(">>> {} got {} bytes: {:?}", who, d.len(), d);
-            }
-            Message::Close(c) => {
-                if let Some(cf) = c {
-                    println!(
-                        ">>> {} got close with code {} and reason `{}`",
-                        who, cf.code, cf.reason
-                    );
-                } else {
-                    println!(">>> {who} somehow got close message without CloseFrame");
-                }
-                return ControlFlow::Break(());
-            }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+    async fn valid_stop() {
+        initialize_tests();
+        let server_test = ServerTest::new(true).await;
+        let response = server_test
+            .client
+            .post(server_test.url_for("/services/test/stop"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        server_test.services().stop().await.unwrap();
+    }
 
-            Message::Pong(v) => {
-                println!(">>> {who} got pong with {v:?}");
-            }
-            // Just as with axum server, the underlying tungstenite websocket library
-            // will handle Ping for you automagically by replying with Pong and copying the
-            // v according to spec. But if you need the contents of the pings you can see them here.
-            Message::Ping(v) => {
-                println!(">>> {who} got ping with {v:?}");
-            }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+    async fn invalid_stop() {
+        initialize_tests();
+        let server_test = ServerTest::new(true).await;
+        let response = server_test
+            .client
+            .post(server_test.url_for("/services/_i_am_not_a_known_service_/stop"))
+            .send()
+            .await
+            .unwrap();
 
-            Message::Frame(_) => {
-                unreachable!("This is never supposed to happen")
-            }
-        }
-        ControlFlow::Continue(())
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        debug!("Stopping server");
+
+        server_test.services().stop().await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+    async fn double_stop() {
+        initialize_tests();
+        let server_test = ServerTest::new(true).await;
+        let response = server_test
+            .client
+            .post(server_test.url_for("/services/test/stop"))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let response = server_test
+            .client
+            .post(server_test.url_for("/services/test/stop"))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        server_test.services().stop().await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+    async fn start() {
+        initialize_tests();
+        let server_test = ServerTest::new(false).await;
+        let response = server_test
+            .client
+            .post(server_test.url_for("/services/test/start"))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let response = server_test
+            .client
+            .post(server_test.url_for("/services/test/stop"))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        server_test.services().stop().await.unwrap();
     }
 }

@@ -12,7 +12,7 @@ mod test {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     async fn hello() {
-        let server_test = ServerTest::new().await;
+        let server_test = ServerTest::new(false).await;
 
         let response = server_test
             .client
@@ -23,5 +23,6 @@ mod test {
 
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.text().await.unwrap(), "kitty");
+        assert!(server_test.services().stop().await.is_ok());
     }
 }
