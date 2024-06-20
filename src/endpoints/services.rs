@@ -20,9 +20,37 @@ use std::net::SocketAddr;
 use axum::extract::connect_info::ConnectInfo;
 use axum::extract::ws::CloseFrame;
 
+/// GET /services
+///
+/// Description: Shows all services
+///
+/// Response example:
+/// [
+///    {
+///       "description" : {
+///          "args" : [
+///             "-b",
+///             "4",
+///             "-s",
+///             "1"
+///          ],
+///          "cmd" : "target/debug/log-generator",
+///          "env" : {},
+///          "health_check" : null,
+///          "name" : "test",
+///          "port" : 8080
+///       },
+///       "id" : "bbfc62db-eae5-4d8f-ae3a-20e267ac4e76",
+///       "status" : "Stopped"
+///    }
+/// ]
+pub async fn index(State(services): State<Arc<Services>>) -> impl IntoResponse {
+    Json(services.to_json().await["services"].clone())
+}
+
 /// POST /services/:id/start
 ///
-/// Description: Starts the service by its name (404  if not found)
+/// Description: Starts the service by its id (404  if not found)
 #[axum::debug_handler]
 pub async fn start(
     path: Result<Path<uuid::Uuid>, PathRejection>,
@@ -39,50 +67,9 @@ pub async fn start(
     }
 }
 
-// Process the path and return the service id if ok, or a response error if not
-async fn find_service(
-    path: Result<Path<uuid::Uuid>, PathRejection>,
-    services: &Arc<Services>,
-) -> Result<uuid::Uuid, Response> {
-    let id = match path {
-        Ok(id) => id.0,
-        Err(_) => {
-            return Err(Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .header("content-type", "application/json")
-                .body(Body::from(json!({"error": "Invalid UUID"}).to_string()))
-                .unwrap());
-        }
-    };
-
-    if services.fetch(id).await.is_none() {
-        return Err(Response::builder()
-            .status(StatusCode::NOT_FOUND)
-            .header("content-type", "application/json")
-            .body(Body::from(
-                json!({"error": "Service not found"}).to_string(),
-            ))
-            .unwrap());
-    }
-
-    Ok(id)
-}
-
-fn ok_response() -> Response {
-    (StatusCode::OK, Json(json!({"status": "ok"}))).into_response()
-}
-
-fn error_response(err: Box<dyn std::error::Error>) -> Response {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(json!({"error": err.to_string()})),
-    )
-        .into_response()
-}
-
 /// POST /services/:id/stop
 ///
-/// Description: Stops the service by its name (404  if not found)
+/// Description: Stops the service by its id (404  if not found)
 #[axum::debug_handler]
 pub async fn stop(
     path: Result<Path<uuid::Uuid>, PathRejection>,
@@ -101,7 +88,7 @@ pub async fn stop(
 
 /// GET /services/:id/stdout
 ///
-/// Description: Connects to the stdout of the service by its name (404  if not found)
+/// Description: Connects to the stdout of the service by its id (404  if not found)
 pub async fn stdout(
     path: Result<Path<uuid::Uuid>, PathRejection>,
     State(services): State<Arc<Services>>,
@@ -117,16 +104,9 @@ pub async fn stdout(
         .into_response()
 }
 
-/// GET /services
-///
-/// Description: Connects to the stdout of the service by its name (404  if not found)
-pub async fn index(State(services): State<Arc<Services>>) -> impl IntoResponse {
-    Json(services.to_json().await["services"].clone())
-}
-
 /// GET /services/:id/stderr
 ///
-/// Description: Connects to the stderr of the service by its name (404  if not found)
+/// Description: Connects to the stderr of the service by its id (404  if not found)
 pub async fn stderr(
     path: Result<Path<uuid::Uuid>, PathRejection>,
     State(services): State<Arc<Services>>,
@@ -177,6 +157,47 @@ async fn handle_socket(
     {
         error!("Could not send close to {address}! {e}");
     };
+}
+
+// Process the path and return the service id if ok, or a response error if not
+async fn find_service(
+    path: Result<Path<uuid::Uuid>, PathRejection>,
+    services: &Arc<Services>,
+) -> Result<uuid::Uuid, Response> {
+    let id = match path {
+        Ok(id) => id.0,
+        Err(_) => {
+            return Err(Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"error": "Invalid UUID"}).to_string()))
+                .unwrap());
+        }
+    };
+
+    if services.fetch(id).await.is_none() {
+        return Err(Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({"error": "Service not found"}).to_string(),
+            ))
+            .unwrap());
+    }
+
+    Ok(id)
+}
+
+fn ok_response() -> Response {
+    (StatusCode::OK, Json(json!({"status": "ok"}))).into_response()
+}
+
+fn error_response(err: Box<dyn std::error::Error>) -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({"error": err.to_string()})),
+    )
+        .into_response()
 }
 
 #[cfg(test)]
@@ -335,6 +356,27 @@ mod test {
 
         let data = response.json::<serde_json::Value>().await.unwrap();
         assert_eq!(data[0]["description"]["name"].as_str().unwrap(), "test");
+        assert_eq!(data[0]["status"].as_str().unwrap(), "Stopped");
+
+        let service_id = first_service_id(&server_test.services()).await;
+        let response = server_test
+            .client
+            .post(server_test.url_for(&format!("/services/{service_id}/start")))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let response = server_test
+            .client
+            .get(server_test.url_for("/services"))
+            .send()
+            .await
+            .unwrap();
+        let data = response.json::<serde_json::Value>().await.unwrap();
+        assert_eq!(data[0]["description"]["name"].as_str().unwrap(), "test");
+        assert_eq!(data[0]["status"].as_str().unwrap(), "Running");
+
         server_test.services().stop().await.unwrap();
     }
 
