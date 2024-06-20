@@ -25,22 +25,11 @@ extern crate log;
 pub fn router(services: Arc<crate::service::Services>) -> Router {
     Router::new()
         .route("/sys/hello", get(endpoints::sys::hello))
-        .route(
-            "/services/:service_name/stdout",
-            get(endpoints::services::stdout),
-        )
-        .route(
-            "/services/:service_name/stderr",
-            get(endpoints::services::stderr),
-        )
-        .route(
-            "/services/:service_name/stop",
-            post(endpoints::services::stop),
-        )
-        .route(
-            "/services/:service_name/start",
-            post(endpoints::services::start),
-        )
+        .route("/services", get(endpoints::services::index))
+        .route("/services/:id/stdout", get(endpoints::services::stdout))
+        .route("/services/:id/stderr", get(endpoints::services::stderr))
+        .route("/services/:id/stop", post(endpoints::services::stop))
+        .route("/services/:id/start", post(endpoints::services::start))
         .with_state(services)
         .layer(
             TraceLayer::new_for_http()

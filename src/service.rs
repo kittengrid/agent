@@ -1,5 +1,8 @@
 use super::persisted_buf_reader_broadcaster::{BufferReceiver, PersistedBufReaderBroadcaster};
 use log::{debug, info};
+use serde::ser::SerializeStruct;
+use serde::Serialize;
+use serde_json::json;
 use std::collections::HashMap;
 use std::io::BufReader;
 use std::process::{Child, Command};
@@ -8,7 +11,7 @@ use tokio::sync::Mutex;
 
 use crate::config;
 
-#[derive(Default, Clone, Debug)]
+#[derive(Default, Clone, Debug, Serialize)]
 pub struct ServiceDescription {
     name: String,
     cmd: String,
@@ -48,18 +51,45 @@ impl ServiceDescription {
     }
 }
 
+#[derive(Debug, Serialize, Clone, Copy)]
+pub enum ServiceStatus {
+    Running,
+    Stopped,
+}
+
+impl Default for ServiceStatus {
+    fn default() -> Self {
+        ServiceStatus::Stopped
+    }
+}
+
 #[derive(Default, Debug)]
 pub struct Service {
+    id: uuid::Uuid,
     description: ServiceDescription,
     child: Option<Child>,
     stdout: PersistedBufReaderBroadcaster,
     stderr: PersistedBufReaderBroadcaster,
+    status: ServiceStatus,
+}
+
+impl Serialize for Service {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::ser::Serializer,
+    {
+        let mut service = serializer.serialize_struct("Service", 2)?;
+        service.serialize_field("description", self.description())?;
+        service.serialize_field("status", &self.status)?;
+        service.end()
+    }
 }
 
 impl From<config::ServiceConfig> for Service {
     fn from(config: config::ServiceConfig) -> Self {
         Self {
             description: config.into(),
+            id: uuid::Uuid::new_v4(),
             ..Default::default()
         }
     }
@@ -128,6 +158,10 @@ impl Service {
         self.description.port
     }
 
+    pub fn id(&self) -> uuid::Uuid {
+        self.id
+    }
+
     /// Syntax sugar for getting the health check of the service.
     pub fn health_check(&self) -> Option<config::HealthCheck> {
         self.description.health_check.clone()
@@ -144,6 +178,7 @@ impl Service {
                 );
                 child.kill()?;
                 child.wait()?;
+                self.status = ServiceStatus::Stopped;
             }
             None => {
                 info!("Service {} was not running", self.description.name);
@@ -170,13 +205,14 @@ impl Service {
         let stderr = BufReader::new(child.stderr.take().expect("stderr is None"));
         self.stderr.watch(stderr).await;
         self.child = Some(child);
+        self.status = ServiceStatus::Running;
         Ok(())
     }
 }
 
 #[derive(Default, Debug)]
 pub struct Services {
-    services: Mutex<HashMap<String, Arc<Mutex<Service>>>>,
+    services: Mutex<HashMap<uuid::Uuid, Arc<Mutex<Service>>>>,
 }
 
 impl Services {
@@ -189,20 +225,20 @@ impl Services {
     /// Adds a service to the services list.
     pub async fn insert(&self, service: Service) {
         debug!("Adding service '{}' to services.", service.description.name);
-        self.services.lock().await.insert(
-            service.description.name.clone(),
-            Arc::new(Mutex::new(service)),
-        );
+        self.services
+            .lock()
+            .await
+            .insert(service.id.clone(), Arc::new(Mutex::new(service)));
     }
 
     /// Returns a service by its name.
-    pub async fn fetch(&self, service_name: &str) -> Option<Arc<Mutex<Service>>> {
-        self.services.lock().await.get(service_name).cloned()
+    pub async fn fetch(&self, id: uuid::Uuid) -> Option<Arc<Mutex<Service>>> {
+        self.services.lock().await.get(&id).cloned()
     }
 
     /// Returns the description of a service by its name.
-    pub async fn description(&self, service_name: &str) -> Option<ServiceDescription> {
-        match self.services.lock().await.get(service_name) {
+    pub async fn description(&self, id: uuid::Uuid) -> Option<ServiceDescription> {
+        match self.services.lock().await.get(&id) {
             Some(service) => {
                 let service = service.lock().await;
                 Some(service.description().clone())
@@ -211,14 +247,14 @@ impl Services {
         }
     }
 
-    /// Stops a service by its name.
-    pub async fn stop_service(&self, service_name: &str) -> std::io::Result<()> {
-        let service = self.services.lock().await.get(service_name).cloned();
+    /// Stops a service by its id.
+    pub async fn stop_service(&self, id: uuid::Uuid) -> std::io::Result<()> {
+        let service = self.services.lock().await.get(&id).cloned();
 
         if service.is_none() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
-                format!("Service {} not found", service_name),
+                format!("Service {} not found", id),
             ));
         }
 
@@ -227,14 +263,44 @@ impl Services {
         service.stop().await
     }
 
-    /// Starts a service by its name.
-    pub async fn start_service(&self, service_name: &str) -> std::io::Result<()> {
-        let service = self.services.lock().await.get(service_name).cloned();
+    pub async fn to_json(&self) -> serde_json::Value {
+        #[derive(Serialize)]
+        struct InnerService {
+            id: uuid::Uuid,
+            description: ServiceDescription,
+            status: ServiceStatus,
+        }
+
+        #[derive(Serialize)]
+        struct ServicesSerializer {
+            services: Vec<InnerService>,
+        }
+        let mut services: ServicesSerializer = ServicesSerializer {
+            services: Vec::new(),
+        };
+
+        for service in self.services.lock().await.values() {
+            let service = service.lock().await;
+            let inner = InnerService {
+                id: service.id(),
+                description: service.description().clone(),
+                status: service.status,
+            };
+
+            services.services.push(inner);
+        }
+
+        json!(services)
+    }
+
+    /// Starts a service by its id.
+    pub async fn start_service(&self, id: uuid::Uuid) -> std::io::Result<()> {
+        let service = self.services.lock().await.get(&id).cloned();
 
         if service.is_none() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
-                format!("Service {} not found", service_name),
+                format!("Service {} not found", id),
             ));
         }
 
@@ -246,11 +312,11 @@ impl Services {
     /// Returns a stream reader for a service if found.
     pub async fn subscribe_to_stream(
         &self,
-        service_name: &str,
+        id: uuid::Uuid,
         stream: ServiceStream,
     ) -> Option<BufferReceiver> {
-        debug!("Subscribing to stdout for service {}", service_name);
-        let stream = match self.services.lock().await.get(service_name).cloned() {
+        debug!("Subscribing to stdout for service {}", id);
+        let stream = match self.services.lock().await.get(&id).cloned() {
             Some(service) => match stream {
                 ServiceStream::Stdout => service.lock().await.stdout(),
                 ServiceStream::Stderr => service.lock().await.stderr(),
@@ -262,10 +328,10 @@ impl Services {
     }
 
     /// Returns an array of every service description.
-    pub async fn descriptions(&self) -> Vec<ServiceDescription> {
-        let mut descriptions: Vec<ServiceDescription> = Vec::new();
-        for service in self.services.lock().await.values() {
-            descriptions.push(service.lock().await.description.clone());
+    pub async fn descriptions(&self) -> HashMap<uuid::Uuid, ServiceDescription> {
+        let mut descriptions: HashMap<uuid::Uuid, ServiceDescription> = HashMap::new();
+        for (id, service) in self.services.lock().await.iter() {
+            descriptions.insert(*id, service.lock().await.description.clone());
         }
         descriptions
     }

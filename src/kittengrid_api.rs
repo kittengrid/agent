@@ -137,6 +137,7 @@ impl KittengridApi {
 
     pub async fn peers_create_service(
         &self,
+        id: uuid::Uuid,
         name: String,
         port: u16,
         path: String,
@@ -144,6 +145,7 @@ impl KittengridApi {
         let res = self
             .post("api/peers/service")
             .json(&serde_json::json!({
+                "id": id,
                 "port": port,
                 "path": path,
                 "name": name

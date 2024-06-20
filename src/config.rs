@@ -2,7 +2,7 @@ use clap_serde_derive::{
     clap::{self, Parser},
     ClapSerde,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use once_cell::sync::Lazy;
 use std::{collections::HashMap, fs::File, io::BufReader};
@@ -115,7 +115,7 @@ pub struct ServiceConfig {
     pub health_check: Option<HealthCheck>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct HealthCheck {
     pub interval: Option<u64>,
     pub timeout: Option<u64>,

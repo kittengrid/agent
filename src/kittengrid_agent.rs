@@ -116,10 +116,10 @@ impl KittengridAgent {
     }
 
     pub async fn spawn_services(&self) -> Result<(), KittengridAgentError> {
-        for service in self.services.descriptions().await {
+        for (id, service) in self.services.descriptions().await {
             let name = service.name();
-            info!("Spawning service: {}.", name);
-            let service = self.services.fetch(&name).await;
+            info!("Spawning service: {} ({}).", id, name);
+            let service = self.services.fetch(id).await;
             let service = service.unwrap();
             let mut service = service.lock().await;
 
@@ -136,7 +136,7 @@ impl KittengridAgent {
             return Err(KittengridAgentError::NotRegisteredError);
         }
         let services = self.services();
-        for service in services.descriptions().await {
+        for (id, service) in services.descriptions().await {
             // Register with API
             let health_check = service.health_check().unwrap();
             let path = health_check.path.unwrap();
@@ -145,7 +145,7 @@ impl KittengridAgent {
                 .api
                 .as_ref()
                 .unwrap()
-                .peers_create_service(service.name(), service.port(), path)
+                .peers_create_service(id, service.name(), service.port(), path)
                 .await
             {
                 error!("Failed to register service: {}.", service.name());
