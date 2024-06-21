@@ -138,8 +138,10 @@ impl KittengridAgent {
         let services = self.services();
         for (id, service) in services.descriptions().await {
             // Register with API
-            let health_check = service.health_check().unwrap();
-            let path = health_check.path.unwrap();
+            let path = match service.health_check() {
+                None => None,
+                Some(health_check) => health_check.path,
+            };
 
             if let Err(e) = self
                 .api

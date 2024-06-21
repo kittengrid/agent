@@ -140,7 +140,7 @@ impl KittengridApi {
         id: uuid::Uuid,
         name: String,
         port: u16,
-        path: String,
+        path: Option<String>,
     ) -> Result<(), KittengridApiError> {
         let res = self
             .post("api/peers/service")
