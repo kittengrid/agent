@@ -135,6 +135,35 @@ impl KittengridApi {
         }
     }
 
+    pub async fn peers_create_service(
+        &self,
+        id: uuid::Uuid,
+        name: String,
+        port: u16,
+        path: String,
+    ) -> Result<(), KittengridApiError> {
+        let res = self
+            .post("api/peers/service")
+            .json(&serde_json::json!({
+                "id": id,
+                "port": port,
+                "path": path,
+                "name": name
+            }))
+            .send()
+            .await;
+        match res {
+            Ok(res) => {
+                if res.status().is_success() {
+                    Ok(())
+                } else {
+                    Err(process_api_status_error_from_response(res).await)
+                }
+            }
+            Err(e) => Err(KittengridApiError::RequestError(e)),
+        }
+    }
+
     pub async fn peers_get_endpoint(&self, cidr: String) -> Result<Endpoint, KittengridApiError> {
         let res = self
             .get(format!("api/peers/endpoint?cidr={}", cidr).as_str())

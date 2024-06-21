@@ -2,44 +2,34 @@ use clap_serde_derive::{
     clap::{self, Parser},
     ClapSerde,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use once_cell::sync::Lazy;
-use std::{fs::File, io::BufReader};
+use std::{collections::HashMap, fs::File, io::BufReader};
 
 // Returns a reference to a lazily created Config object.
 // TODO: FIX TESTS ARGUMENTS
 static CONFIG: Lazy<Config> = Lazy::new(|| {
+    let mut args;
     if cfg!(test) {
-        Config {
-            log_level: String::from("error"),
-            work_directory: String::from("/tmp/test"),
-            bind_address: String::from("127.0.0.1"),
-            bind_port: 8000,
-            api_key: String::from("_some_token_"),
-            api_url: String::from("http://web:3000"),
-            vcs_provider: String::from("github"),
-            vcs_id: String::from("1337"),
-            workflow_id: String::from("12345678"),
-            services: vec![],
+        args = Args::parse_from(&["kittengrid-agent", "--config", "kittengrid.yml"]);
+    } else {
+        args = Args::parse();
+    }
+
+    let mut config = if let Ok(f) = File::open(&args.config_path) {
+        // Parse config with serde
+        match serde_yaml::from_reader::<_, <Config as ClapSerde>::Opt>(BufReader::new(f)) {
+            // merge config already parsed from clap
+            Ok(config) => Config::from(config).merge(&mut args.config),
+            Err(err) => panic!("Error in configuration file:\n{}", err),
         }
     } else {
-        let mut args = Args::parse();
-
-        let mut config = if let Ok(f) = File::open(&args.config_path) {
-            // Parse config with serde
-            match serde_yaml::from_reader::<_, <Config as ClapSerde>::Opt>(BufReader::new(f)) {
-                // merge config already parsed from clap
-                Ok(config) => Config::from(config).merge(&mut args.config),
-                Err(err) => panic!("Error in configuration file:\n{}", err),
-            }
-        } else {
-            // If there is not config file return only config parsed from clap
-            Config::from(&mut args.config)
-        };
-        config.set_defaults_if_missing();
-        config
-    }
+        // If there is not config file return only config parsed from clap
+        Config::from(&mut args.config)
+    };
+    config.set_defaults_if_missing();
+    config
 });
 
 pub fn get_config() -> &'static Config {
@@ -82,7 +72,7 @@ impl Config {
 #[command(author, version, about, long_about = None)]
 pub struct Config {
     /// Log level (error, warn, info, debug and trace), defaults to info
-    #[arg(short, long, env("LOG_LEVEL"))]
+    #[arg(short, long, env("KITTENGRID_LOG_LEVEL"))]
     pub log_level: String,
 
     #[arg(short, long, env("KITTENGRID_WORK_DIR"))]
@@ -112,14 +102,25 @@ pub struct Config {
     pub workflow_id: String,
 
     #[clap(skip)]
-    pub services: Vec<ServiceDefinition>,
+    pub services: Vec<ServiceConfig>,
 }
 
-#[derive(Parser, Debug, Clone, Deserialize)]
-pub struct ServiceDefinition {
-    name: String,
-    address: String,
-    port: u16,
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ServiceConfig {
+    pub name: String,
+    pub port: u16,
+    pub cmd: Option<String>,
+    pub env: Option<HashMap<String, String>>,
+    pub args: Option<Vec<String>>,
+    pub health_check: Option<HealthCheck>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct HealthCheck {
+    pub interval: Option<u64>,
+    pub timeout: Option<u64>,
+    pub retries: Option<u64>,
+    pub path: Option<String>,
 }
 
 #[cfg(test)]

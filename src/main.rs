@@ -1,75 +1,61 @@
-use lib::config::get_config;
-use lib::wireguard::WireGuard;
-use log::{debug, error, info};
-
+use lib::kittengrid_agent::KittengridAgent;
+use log::{error, info};
 use std::process::exit;
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 20)]
 async fn main() {
-    let config = get_config();
+    let mut agent = KittengridAgent::new(lib::config::get_config().clone());
 
+    // Log initialization
     lib::utils::initialize_logger();
-    debug!("Config read: {:?}", config);
-    let listener =
-        tokio::net::TcpListener::bind(format!("{}:{}", config.bind_address, config.bind_port))
-            .await
-            .unwrap();
 
-    // Register with API
-    let kg_api = match lib::kittengrid_api::from_registration(config).await {
-        Ok(api) => {
-            info!("Successfully registered with kittengrid api");
-            api
+    // Service setup
+    agent.init().await;
+
+    // Register with API so we can fetch network configuration
+    match agent.register().await {
+        Ok(_) => {
+            info!("Successfully registered with kittengrid api.");
         }
         Err(e) => {
             error!("Failed to register with kittengrid api: {}", e);
             exit(1);
         }
-    };
+    }
 
-    // Fetch network configuration
-    let peers = match kg_api.peers_create().await {
-        Ok(peers) => peers,
+    // Network config
+    match agent.configure_network().await {
+        Ok(_) => {
+            info!("Successfully configured network.");
+        }
         Err(e) => {
-            error!("Failed to create peers: {}", e);
+            error!("Failed to configure network: {}.", e);
             exit(1);
         }
-    };
-
-    for (device_counter, peer) in peers.iter().enumerate() {
-        let endpoint = match kg_api.peers_get_endpoint(peer.network()).await {
-            Ok(endpoint) => endpoint,
-            Err(e) => {
-                error!("Failed to fetch endpoints: {}", e);
-                exit(1);
-            }
-        };
-
-        // Set up wireguard tunnel for the peer
-        let device = match WireGuard::new(device_counter).await {
-            Ok(device) => device,
-            Err(e) => {
-                error!("Failed to create wireguard device: {}", e);
-                exit(1);
-            }
-        };
-
-        match device.set_config(peer, &endpoint).await {
-            Ok(_) => {
-                info!("Successfully configured wireguard device");
-            }
-            Err(e) => {
-                error!("Failed to set wireguard device configuration: {}", e);
-                exit(1);
-            }
-        }
-
-        // block until all tun readers closed
-        tokio::spawn(async move {
-            info!("Starting kittengrid tunnel for device: {}", device.name());
-            device.wait();
-        });
     }
-    info!("All interfaces started, launching the web server.");
-    lib::launch(listener).await;
+
+    info!("All interfaces up. Spawning services.");
+    match agent.spawn_services().await {
+        Ok(_) => {
+            info!("Successfully spawned services.");
+        }
+        Err(e) => {
+            error!("Failed to spawn services: {}.", e);
+            exit(1);
+        }
+    }
+
+    info!("Services started, registering.");
+    match agent.register_services().await {
+        Ok(_) => {
+            info!("Successfully registered services.");
+        }
+        Err(e) => {
+            error!("Failed to register services: {}.", e);
+            exit(1);
+        }
+    }
+
+    info!("All services spawned. Waiting for incomming requests.");
+    agent.wait(None).await;
 }

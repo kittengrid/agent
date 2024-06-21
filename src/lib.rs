@@ -1,37 +1,49 @@
-use std::collections::HashMap;
-use uuid::Uuid;
+use std::net::SocketAddr;
 
+use std::sync::Arc;
+use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 mod api_error;
 pub mod config;
 pub mod data_dir;
 mod endpoints;
 pub mod kittengrid_api;
 pub mod utils;
-use axum::{routing::get, Router};
+use axum::{
+    routing::{get, post},
+    Router,
+};
+pub mod kittengrid_agent;
+pub mod persisted_buf_reader_broadcaster;
+pub mod service;
+
 pub mod wireguard;
 
 extern crate alloc;
 
-use once_cell::sync::Lazy;
-
 extern crate log;
-use std::sync::{Arc, RwLock};
 
-pub type AgentState<'a> = Arc<RwLock<HashMap<Uuid, i32>>>;
-static AGENT_STATE: Lazy<AgentState> =
-    Lazy::new(|| Arc::new(RwLock::new(HashMap::<Uuid, i32>::new())));
-
-/// Returns the agent state
-pub fn agent_state() -> &'static AgentState<'static> {
-    &AGENT_STATE
+pub fn router(services: Arc<crate::service::Services>) -> Router {
+    Router::new()
+        .route("/sys/hello", get(endpoints::sys::hello))
+        .route("/services", get(endpoints::services::index))
+        .route("/services/:id/stdout", get(endpoints::services::stdout))
+        .route("/services/:id/stderr", get(endpoints::services::stderr))
+        .route("/services/:id/stop", post(endpoints::services::stop))
+        .route("/services/:id/start", post(endpoints::services::start))
+        .with_state(services)
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(DefaultMakeSpan::default().include_headers(true)),
+        )
 }
 
-pub fn router() -> Router {
-    Router::new().route("/sys/hello", get(endpoints::sys::hello))
-}
-
-pub async fn launch(listener: tokio::net::TcpListener) {
-    axum::serve(listener, router()).await.unwrap();
+pub async fn launch(listener: tokio::net::TcpListener, services: Arc<crate::service::Services>) {
+    axum::serve(
+        listener,
+        router(services).into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .unwrap();
 }
 
 #[cfg(test)]
