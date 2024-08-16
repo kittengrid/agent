@@ -147,7 +147,7 @@ async fn handle_socket(
         }
     }
 
-    debug!("Closing {address}...");
+    info!("Websocket disconnected, dropping internal stream.");
     if let Err(e) = services
         .unsubscribe_from_stream(id, stream, stream_channel_receiver)
         .await
