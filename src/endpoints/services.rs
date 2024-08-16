@@ -10,7 +10,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Json, Response},
 };
-use log::{debug, error, info};
+use log::{error, info};
 use serde_json::json;
 use std::{borrow::Cow, sync::Arc};
 
