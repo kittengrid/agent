@@ -148,6 +148,13 @@ async fn handle_socket(
     }
 
     debug!("Closing {address}...");
+    if let Err(e) = services
+        .unsubscribe_from_stream(id, stream, stream_channel_receiver)
+        .await
+    {
+        error!("Could not unsubscribe from {id} {stream} channel! {e}");
+    }
+
     if let Err(e) = socket
         .send(Message::Close(Some(CloseFrame {
             code: axum::extract::ws::close_code::NORMAL,
@@ -202,6 +209,7 @@ fn error_response(err: Box<dyn std::error::Error>) -> Response {
 
 #[cfg(test)]
 mod test {
+
     use crate::test_utils::*;
     use futures_util::StreamExt;
 
@@ -241,6 +249,7 @@ mod test {
 
         assert!(receiver.next().await.is_some());
         assert!(receiver.next().await.is_some());
+
         server_test.services().stop().await.unwrap();
     }
 

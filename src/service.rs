@@ -327,6 +327,31 @@ impl Services {
         Some(stream.subscribe().await)
     }
 
+    /// Returns a stream reader for a service if found.
+    pub async fn unsubscribe_from_stream(
+        &self,
+        id: uuid::Uuid,
+        stream: ServiceStream,
+        receiver: BufferReceiver,
+    ) -> Result<(), std::io::Error> {
+        debug!("Subscribing to stdout for service {}", id);
+        let stream = match self.services.lock().await.get(&id).cloned() {
+            Some(service) => match stream {
+                ServiceStream::Stdout => service.lock().await.stdout(),
+                ServiceStream::Stderr => service.lock().await.stderr(),
+            },
+            None => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "Service not found",
+                ))
+            }
+        };
+
+        stream.unsubscribe(receiver).await;
+        Ok(())
+    }
+
     /// Returns an array of every service description.
     pub async fn descriptions(&self) -> HashMap<uuid::Uuid, ServiceDescription> {
         let mut descriptions: HashMap<uuid::Uuid, ServiceDescription> = HashMap::new();
