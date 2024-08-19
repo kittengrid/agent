@@ -12,7 +12,7 @@ use std::{collections::HashMap, fs::File, io::BufReader};
 static CONFIG: Lazy<Config> = Lazy::new(|| {
     let mut args;
     if cfg!(test) {
-        args = Args::parse_from(&["kittengrid-agent", "--config", "kittengrid.yml"]);
+        args = Args::parse_from(["kittengrid-agent", "--config", "kittengrid.yml"]);
     } else {
         args = Args::parse();
     }
@@ -59,10 +59,7 @@ impl Config {
             self.work_directory = "/var/lib/kittengrid-agent".to_string();
         }
         if self.bind_address.is_empty() {
-            self.bind_address = "127.0.0.1".to_string();
-        }
-        if self.bind_port == 0 {
-            self.bind_port = 3000;
+            self.bind_address = "0.0.0.0".to_string();
         }
         self
     }
@@ -78,11 +75,11 @@ pub struct Config {
     #[arg(short, long, env("KITTENGRID_WORK_DIR"))]
     pub work_directory: String,
 
-    /// Bind address for the agent. [default: 127.0.0.1]
+    /// Bind address for the agent. [default: 0.0.0.0]
     #[arg(long, env("KITTENGRID_BIND_ADDRESS"))]
     pub bind_address: String,
 
-    /// Bind port for the agent. [default: 3000]
+    /// Bind port for the agent. [default: 0]
     #[arg(long, env("KITTENGRID_BIND_PORT"))]
     pub bind_port: u16,
 
@@ -130,6 +127,6 @@ mod test {
     #[test]
     fn parse() {
         let config = get_config();
-        assert_eq!(config.bind_address, "127.0.0.1");
+        assert_eq!(config.bind_address, "0.0.0.0");
     }
 }

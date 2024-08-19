@@ -11,6 +11,7 @@ pub struct KittengridAgent {
     config: Config,
     api: Option<crate::kittengrid_api::KittengridApi>,
     services: Arc<crate::service::Services>,
+    local_addr: Option<std::net::SocketAddr>,
 }
 
 use thiserror::Error;
@@ -19,6 +20,8 @@ use thiserror::Error;
 pub enum KittengridAgentError {
     #[error("Agent not registered")]
     NotRegisteredError,
+    #[error("Agent is not listening.")]
+    NotListeningError,
     #[error("Api Error: ({0})")]
     KittengridApiError(#[from] crate::kittengrid_api::KittengridApiError),
     #[error("Wireguard Error: ({0})")]
@@ -68,8 +71,12 @@ impl KittengridAgent {
 
         let kg_api = self.api.as_ref().unwrap();
 
+        if self.local_addr.is_none() {
+            return Err(KittengridAgentError::NotListeningError);
+        }
+
         // Fetch network configuration
-        let peers = match kg_api.peers_create().await {
+        let peers = match kg_api.peers_create(self.local_addr.unwrap().port()).await {
             Ok(peers) => peers,
             Err(e) => {
                 return Err(KittengridAgentError::KittengridApiError(e));
@@ -157,17 +164,21 @@ impl KittengridAgent {
         Ok(())
     }
 
-    pub async fn wait(&self, listener: Option<tokio::net::TcpListener>) {
-        let listener = match listener {
-            Some(listener) => listener,
-            None => tokio::net::TcpListener::bind(format!(
-                "{}:{}",
-                self.config.bind_address, self.config.bind_port
-            ))
-            .await
-            .unwrap(),
-        };
+    pub async fn bind(&mut self) -> tokio::net::TcpListener {
+        let listener = tokio::net::TcpListener::bind(format!(
+            "{}:{}",
+            self.config.bind_address, self.config.bind_port
+        ))
+        .await
+        .unwrap();
+        let addr = listener.local_addr().unwrap();
+        self.local_addr = Some(addr);
 
+        info!("Listening on: {}", addr);
+        listener
+    }
+
+    pub async fn wait(&self, listener: tokio::net::TcpListener) {
         crate::launch(listener, Arc::clone(&self.services)).await;
     }
 }

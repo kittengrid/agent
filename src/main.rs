@@ -12,6 +12,9 @@ async fn main() {
     // Service setup
     agent.init().await;
 
+    // Bind to the network
+    let listener = agent.bind().await;
+
     // Register with API so we can fetch network configuration
     match agent.register().await {
         Ok(_) => {
@@ -57,5 +60,5 @@ async fn main() {
     }
 
     info!("All services spawned. Waiting for incomming requests.");
-    agent.wait(None).await;
+    agent.wait(listener).await;
 }

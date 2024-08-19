@@ -110,7 +110,7 @@ impl ServerTest {
         }
 
         let guard = tokio::task::spawn(async move {
-            agent.wait(Some(listener)).await;
+            agent.wait(listener).await;
             debug!("ServerTest: Server stopped")
         });
         Self {

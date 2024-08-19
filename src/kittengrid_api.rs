@@ -117,8 +117,14 @@ impl Endpoint {
 impl KittengridApi {
     // Requests Kittengrid Api to create peers
     // It returns a list of peers ready to be configured.
-    pub async fn peers_create(&self) -> Result<Vec<Peer>, KittengridApiError> {
-        let res = self.post("api/peers").send().await;
+    pub async fn peers_create(&self, bind_port: u16) -> Result<Vec<Peer>, KittengridApiError> {
+        let res = self
+            .post("api/peers")
+            .json(&serde_json::json!({
+                "bind_port": bind_port
+            }))
+            .send()
+            .await;
         match res {
             Ok(res) => {
                 if res.status().is_success() {
@@ -256,7 +262,7 @@ mod test {
         let kittengrid_api = crate::kittengrid_api::from_registration(crate::config::get_config())
             .await
             .unwrap();
-        let peers = kittengrid_api.peers_create().await.unwrap();
+        let peers = kittengrid_api.peers_create(0).await.unwrap();
         assert!(!peers.is_empty());
     }
 
@@ -267,7 +273,7 @@ mod test {
         let kittengrid_api = crate::kittengrid_api::from_registration(crate::config::get_config())
             .await
             .unwrap();
-        let peers = kittengrid_api.peers_create().await.unwrap();
+        let peers = kittengrid_api.peers_create(0).await.unwrap();
         let endpoint = kittengrid_api
             .peers_get_endpoint(peers[0].network.clone())
             .await
