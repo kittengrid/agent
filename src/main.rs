@@ -1,4 +1,4 @@
-tuse lib::kittengrid_agent::KittengridAgent;
+use lib::kittengrid_agent::KittengridAgent;
 use log::{error, info};
 use std::process::exit;
 
