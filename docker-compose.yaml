@@ -1,36 +1,35 @@
+x-agent: &agent
+  build:
+    context: .
+    dockerfile: docker/Dockerfile
+    target: dev
+  working_dir: /app
+  user: root
+  stdin_open: true
+  tty: true
+  init: true
+  cap_add:
+    - NET_ADMIN
+  devices:
+    - /dev/net/tun
+  networks:
+    kittengrid:
+  volumes:
+    - .:/app
+    - ./tmp/home:/home/kittengrid
+    - ./docker/resolv.conf:/etc/resolv.conf
+    - ./.env.local:/.env.local
 
 services:
-  agent:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile
-      target: dev
-    working_dir: /app
-    user: "${HOST_UID:?please set it to $(id -u) and rerun the command}:${HOST_GID:?please set it to $(id -g) and rerun the command}"
-    stdin_open: true
-    tty: true
-    init: true
+  agent-01:
+    <<: *agent
     ports:
       - 3001:3000
-    environment:
-      KITTENGRID_API_KEY: "_some_token_"
-      KITTENGRID_VCS_PROVIDER: github
-      KITTENGRID_VCS_ID: 1337
-      KITTENGRID_WORKFLOW_ID: 12345678
-      KITTENGRID_API_URL: http://web:3000
-      KITTENGRID_BIND_ADDRESS: "0.0.0.0"
-    cap_add:
-      - NET_ADMIN
-    devices:
-      - /dev/net/tun
 
-    networks:
-      kittengrid:
-    command: bash
-    volumes:
-      - .:/app
-      - ./tmp/home:/home/kittengrid
-      - ./docker/resolv.conf:/etc/resolv.conf
+  agent-02:
+    <<: *agent
+    ports:
+      - 3002:3000
 
 networks:
   kittengrid:

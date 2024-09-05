@@ -27,6 +27,7 @@ RUN useradd -m -o -u 999 ${APP_USER} && chown ${APP_USER} ${APP_ROOT} \
     && chown -R kittengrid /home/kittengrid
 COPY docker/rootfs/ /
 USER kittengrid
+ENTRYPOINT /entrypoint.sh
 WORKDIR ${APP_ROOT}
 
 FROM base as build

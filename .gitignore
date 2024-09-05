@@ -7,4 +7,5 @@
 tmp/home/*
 !tmp/home/.keepme
 
-
+# Ours
+.env.local

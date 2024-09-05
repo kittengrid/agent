@@ -1,11 +1,13 @@
 use super::config::Config;
 use serde::Deserialize;
+use std::env;
 
 #[derive(Debug)]
 pub struct KittengridApi {
     api_token: String,
     api_url: String,
     client: reqwest::Client,
+    config: Config,
 }
 
 use thiserror::Error;
@@ -54,6 +56,7 @@ pub async fn from_registration(config: &Config) -> Result<KittengridApi, Kitteng
                         let api_token = data.token;
                         Ok(KittengridApi {
                             api_token,
+                            config: config.clone(),
                             api_url: config.api_url.clone(),
                             client,
                         })
@@ -154,7 +157,9 @@ impl KittengridApi {
                 "id": id,
                 "port": port,
                 "path": path,
-                "name": name
+                "name": name,
+                "publish": self.config.start_services,
+                "sha": self.config.last_commit_sha,
             }))
             .send()
             .await;
