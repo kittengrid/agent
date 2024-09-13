@@ -92,8 +92,11 @@ pub struct Config {
     #[arg(long, env("KITTENGRID_VCS_PROVIDER"))]
     pub vcs_provider: String,
 
-    #[arg(long, env("KITTENGRID_VCS_ID"))]
-    pub vcs_id: String,
+    #[arg(long, env("KITTENGRID_PULL_REQUEST_VCS_ID"))]
+    pub pull_request_vcs_id: String,
+
+    #[arg(long, env("KITTENGRID_PROJECT_VCS_ID"))]
+    pub project_vcs_id: String,
 
     #[arg(long, env("KITTENGRID_WORKFLOW_ID"))]
     pub workflow_id: String,
