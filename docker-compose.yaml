@@ -31,6 +31,19 @@ services:
     ports:
       - 3002:3000
 
+  build-container:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: build
+    working_dir: /app
+    user: root
+    tty: true
+    volumes:
+      - .:/app
+    entrypoint: bash
+
+
 networks:
   kittengrid:
     name: kittengrid_kittengrid
