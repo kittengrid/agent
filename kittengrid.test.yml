@@ -1,0 +1,16 @@
+work_directory: /tmp/test
+api_key: _some_token_
+api_url: http://web:3000
+vcs_provider: github
+vcs_id: 1337
+workflow_id: 12345678"
+
+services:
+  - name: test
+    cmd: target/debug/log-generator
+    port: 8080
+    args:
+      - -b
+      - 4
+      - -s
+      - 1
