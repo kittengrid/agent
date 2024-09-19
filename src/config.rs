@@ -12,7 +12,7 @@ use std::{collections::HashMap, fs::File, io::BufReader};
 static CONFIG: Lazy<Config> = Lazy::new(|| {
     let mut args;
     if cfg!(test) {
-        args = Args::parse_from(["kittengrid-agent", "--config", "kittengrid.yml"]);
+        args = Args::parse_from(["kittengrid-agent", "--config", "kittengrid.test.yml"]);
     } else {
         args = Args::parse();
     }
