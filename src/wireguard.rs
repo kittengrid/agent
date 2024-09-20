@@ -16,6 +16,7 @@ use wireguard_rs::configuration::Configuration;
 use wireguard_rs::platform::tun::PlatformTun;
 
 const PORT_BASE: u16 = 51820;
+const MTU: u32 = 1384;
 
 pub struct WireGuard {
     device: WireGuardRs<wireguard_rs::platform::plt::Tun, wireguard_rs::platform::plt::UDP>,
@@ -152,6 +153,12 @@ impl WireGuard {
                     .execute()
                     .await?;
                 handle.link().set(link.header.index).up().execute().await?;
+                handle
+                    .link()
+                    .set(link.header.index)
+                    .mtu(MTU)
+                    .execute()
+                    .await?;
             }
             _ => {
                 error!("no link found");
