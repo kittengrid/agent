@@ -1,6 +1,5 @@
 use super::config::Config;
 use serde::Deserialize;
-use std::env;
 
 #[derive(Debug)]
 pub struct KittengridApi {
