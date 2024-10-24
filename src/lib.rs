@@ -25,6 +25,7 @@ extern crate log;
 pub fn router(services: Arc<crate::service::Services>) -> Router {
     Router::new()
         .route("/sys/hello", get(endpoints::sys::hello))
+        .route("/sys/shutdown", post(endpoints::sys::shutdown))
         .route("/services", get(endpoints::services::index))
         .route("/services/:id/stdout", get(endpoints::services::stdout))
         .route("/services/:id/stderr", get(endpoints::services::stderr))
