@@ -30,10 +30,12 @@ fn main() {
 
     for _ in 0..args.burst {
         println!("{}", generate_line(args.name));
+        eprintln!("{}", generate_line(args.name));
     }
 
     loop {
         println!("{}", generate_line(args.name));
+        eprintln!("{}", generate_line(args.name));
         std::thread::sleep(std::time::Duration::from_millis(args.sleep as u64));
     }
 }

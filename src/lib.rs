@@ -26,11 +26,23 @@ pub fn router(services: Arc<crate::service::Services>) -> Router {
     Router::new()
         .route("/sys/hello", get(endpoints::sys::hello))
         .route("/sys/shutdown", post(endpoints::sys::shutdown))
-        .route("/services", get(endpoints::services::index))
-        .route("/services/:id/stdout", get(endpoints::services::stdout))
-        .route("/services/:id/stderr", get(endpoints::services::stderr))
-        .route("/services/:id/stop", post(endpoints::services::stop))
-        .route("/services/:id/start", post(endpoints::services::start))
+        .route("/public/services", get(endpoints::public::services::index))
+        .route(
+            "/public/services/:id/stdout",
+            get(endpoints::public::services::stdout),
+        )
+        .route(
+            "/public/services/:id/stderr",
+            get(endpoints::public::services::stderr),
+        )
+        .route(
+            "/public/services/:id/stop",
+            post(endpoints::public::services::stop),
+        )
+        .route(
+            "/public/services/:id/start",
+            post(endpoints::public::services::start),
+        )
         .with_state(services)
         .layer(
             TraceLayer::new_for_http()

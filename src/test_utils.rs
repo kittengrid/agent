@@ -1,6 +1,9 @@
 use crate::kittengrid_agent::KittengridAgent;
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use crate::service::Service;
 use crate::utils;
+use jsonwebtoken::{encode, EncodingKey, Header};
 use std::sync::Once;
 
 use log::debug;
@@ -8,6 +11,7 @@ use std::env;
 use std::fs::File;
 use std::io::BufReader;
 
+use crate::endpoints::public::services::Claims;
 use std::process::Command;
 use std::process::Output;
 use std::sync::Arc;
@@ -85,6 +89,32 @@ impl ServerTest {
             .stderr(std::process::Stdio::null())
             .status()
             .unwrap();
+    }
+
+    pub fn valid_token(&self) -> String {
+        let current_time_in_seconds = match SystemTime::now().duration_since(UNIX_EPOCH) {
+            Ok(n) => n.as_secs(),
+            Err(_) => panic!("SystemTime before UNIX EPOCH!"),
+        };
+        self.token(current_time_in_seconds + 3600)
+    }
+
+    pub fn invalid_token(&self) -> String {
+        self.token(0)
+    }
+
+    fn token(&self, expires_at: u64) -> String {
+        let claims = Claims {
+            bearer_id: "test".to_string(),
+            bearer_type: "test".to_string(),
+            exp: expires_at,
+        };
+        encode(
+            &Header::default(),
+            &claims,
+            &EncodingKey::from_secret(crate::config::get_config().clone().api_key.as_bytes()),
+        )
+        .unwrap()
     }
 
     pub async fn new(spawn_services: bool) -> Self {
