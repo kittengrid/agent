@@ -59,6 +59,8 @@ rtnetlink = "0.14.1"
 futures = "0.3.31"
 wireguard-rs   = { git = "https://github.com/kittengrid/wireguard-rs.git" }
 x25519-dalek = "1.2.0"
+jsonwebtoken = "9.3.0"
+async-trait = "0.1.83"
 
 [dependencies.uuid]
 version = "1.11.0"
