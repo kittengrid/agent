@@ -159,7 +159,6 @@ impl KittengridApi {
                 "path": path,
                 "name": name,
                 "publish": self.config.start_services,
-                "sha": self.config.last_commit_sha,
             }))
             .send()
             .await;
