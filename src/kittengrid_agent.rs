@@ -54,6 +54,8 @@ impl KittengridAgent {
         }
     }
 
+    /// Registers the agent with the kittengrid API and obtains a token to be
+    /// used in subsequent requests.
     pub async fn register(&mut self) -> Result<(), crate::kittengrid_api::KittengridApiError> {
         let api = crate::kittengrid_api::from_registration(&self.config).await;
         if let Ok(api) = api {
@@ -64,6 +66,7 @@ impl KittengridAgent {
         }
     }
 
+    /// Configures local network with wireguard tunnels.
     pub async fn configure_network(&mut self) -> Result<(), KittengridAgentError> {
         if self.api.is_none() {
             return Err(KittengridAgentError::NotRegisteredError);
@@ -122,6 +125,24 @@ impl KittengridAgent {
         Ok(())
     }
 
+    /// For now, we just log errors.
+    pub async fn set_status(&self, status: crate::kittengrid_api::PullRequestStatus) {
+        if self.api.is_none() {
+            return;
+        }
+        // Register with API
+        if let Err(_e) = self
+            .api
+            .as_ref()
+            .unwrap()
+            .agents_update_pull_request(status.clone())
+            .await
+        {
+            error!("Failed to set status to: {}.", status);
+        };
+    }
+
+    /// Starts services in the agent.
     pub async fn spawn_services(&self) -> Result<(), KittengridAgentError> {
         for (id, service) in self.services.descriptions().await {
             let name = service.name();
@@ -138,6 +159,29 @@ impl KittengridAgent {
         Ok(())
     }
 
+    /// Publishes services to the kittengrid API.
+    pub async fn publish_services(&self) -> Result<(), KittengridAgentError> {
+        if self.api.is_none() {
+            return Err(KittengridAgentError::NotRegisteredError);
+        }
+        let services = self.services();
+        for (_, service) in services.descriptions().await {
+            // Register with API
+            if let Err(e) = self
+                .api
+                .as_ref()
+                .unwrap()
+                .agents_create_service(service.name())
+                .await
+            {
+                error!("Failed to publish service: {}.", service.name());
+                return Err(KittengridAgentError::KittengridApiError(e));
+            };
+        }
+        Ok(())
+    }
+
+    /// Registers services in the system to traffic can be routed to them.
     pub async fn register_services(&self) -> Result<(), KittengridAgentError> {
         if self.api.is_none() {
             return Err(KittengridAgentError::NotRegisteredError);
@@ -164,6 +208,7 @@ impl KittengridAgent {
         Ok(())
     }
 
+    /// Binds the agent to the network returining a listener.
     pub async fn bind(&mut self) -> tokio::net::TcpListener {
         let listener = tokio::net::TcpListener::bind(format!(
             "{}:{}",
