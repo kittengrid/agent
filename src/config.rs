@@ -104,6 +104,9 @@ pub struct Config {
     #[arg(long, env("KITTENGRID_START_SERVICES"))]
     pub start_services: bool,
 
+    #[arg(long, env("KITTENGRID_LAST_COMMIT_SHA"))]
+    pub last_commit_sha: String,
+
     #[clap(skip)]
     pub services: Vec<ServiceConfig>,
 }
