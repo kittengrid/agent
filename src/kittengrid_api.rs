@@ -1,5 +1,6 @@
 use super::config::Config;
 use serde::Deserialize;
+use std::fmt;
 
 #[derive(Debug)]
 pub struct KittengridApi {
@@ -117,7 +118,78 @@ impl Endpoint {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum PullRequestStatus {
+    Created,
+    Booting,
+    Sleeping,
+    Error,
+    Running,
+    ShuttingDown,
+    Merged,
+}
+
+impl fmt::Display for PullRequestStatus {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            PullRequestStatus::Created => write!(f, "created"),
+            PullRequestStatus::Booting => write!(f, "booting"),
+            PullRequestStatus::Sleeping => write!(f, "sleeping"),
+            PullRequestStatus::Error => write!(f, "error"),
+            PullRequestStatus::Running => write!(f, "running"),
+            PullRequestStatus::ShuttingDown => write!(f, "shutting_down"),
+            PullRequestStatus::Merged => write!(f, "merged"),
+        }
+    }
+}
+
 impl KittengridApi {
+    /// Updates a pull_request status using the agents Kittengrid internal api
+    pub async fn agents_update_pull_request(
+        &self,
+        status: PullRequestStatus,
+    ) -> Result<(), KittengridApiError> {
+        let res = self
+            .put("api/agents/pull_request")
+            .json(&serde_json::json!({
+                "status": status.to_string(),
+            }))
+            .send()
+            .await;
+        match res {
+            Ok(res) => {
+                if res.status().is_success() {
+                    Ok(())
+                } else {
+                    Err(process_api_status_error_from_response(res).await)
+                }
+            }
+            Err(e) => Err(KittengridApiError::RequestError(e)),
+        }
+    }
+
+    /// Publish services to Kittengrid internal api
+    pub async fn agents_create_service(&self, name: String) -> Result<(), KittengridApiError> {
+        let res = self
+            .post("api/agents/service")
+            .json(&serde_json::json!({
+                "name": name,
+                "sha": self.config.last_commit_sha,
+            }))
+            .send()
+            .await;
+        match res {
+            Ok(res) => {
+                if res.status().is_success() {
+                    Ok(())
+                } else {
+                    Err(process_api_status_error_from_response(res).await)
+                }
+            }
+            Err(e) => Err(KittengridApiError::RequestError(e)),
+        }
+    }
+
     // Requests Kittengrid Api to create peers
     // It returns a list of peers ready to be configured.
     pub async fn peers_create(&self, bind_port: u16) -> Result<Vec<Peer>, KittengridApiError> {
@@ -200,6 +272,12 @@ impl KittengridApi {
     pub fn post(&self, path: &str) -> reqwest::RequestBuilder {
         self.client
             .post(format!("{}/{}", self.api_url, path))
+            .header("Authorization", format!("Bearer {}", self.api_token))
+    }
+
+    pub fn put(&self, path: &str) -> reqwest::RequestBuilder {
+        self.client
+            .put(format!("{}/{}", self.api_url, path))
             .header("Authorization", format!("Bearer {}", self.api_token))
     }
 

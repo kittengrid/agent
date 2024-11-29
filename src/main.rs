@@ -27,7 +27,23 @@ async fn main() {
         }
     }
 
+    info!("Publishing service info.");
+    match agent.publish_services().await {
+        Ok(_) => {
+            info!("Successfully published services.");
+        }
+        Err(e) => {
+            error!("Failed to publish services: {}.", e);
+            exit(1);
+        }
+    }
+
     if config.start_services {
+        info!("Service start disabled. Exiting.");
+        agent
+            .set_status(lib::kittengrid_api::PullRequestStatus::Booting)
+            .await;
+
         // Network config
         match agent.configure_network().await {
             Ok(_) => {
@@ -60,20 +76,18 @@ async fn main() {
                 exit(1);
             }
         }
+        agent
+            .set_status(lib::kittengrid_api::PullRequestStatus::Running)
+            .await;
 
         info!("All services spawned. Waiting for incomming requests.");
         agent.wait(listener).await;
     } else {
-        info!("Service start disabled. Publishing service info and exiting.");
-        match agent.register_services().await {
-            Ok(_) => {
-                info!("Successfully registered services.");
-            }
-            Err(e) => {
-                error!("Failed to register services: {}.", e);
-                exit(1);
-            }
-        }
+        info!("Service start disabled. Exiting.");
+        agent
+            .set_status(lib::kittengrid_api::PullRequestStatus::Sleeping)
+            .await;
     }
+
     exit(0);
 }
