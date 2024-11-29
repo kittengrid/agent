@@ -98,14 +98,11 @@ pub struct Config {
     #[arg(long, env("KITTENGRID_PROJECT_VCS_ID"))]
     pub project_vcs_id: String,
 
-    #[arg(long, env("KITTENGRID_WORKFLOW_ID"))]
-    pub workflow_id: String,
+    #[arg(long, env("KITTENGRID_WORKFLOW_RUN_ID"))]
+    pub workflow_run_id: String,
 
     #[arg(long, env("KITTENGRID_START_SERVICES"))]
     pub start_services: bool,
-
-    #[arg(long, env("KITTENGRID_LAST_COMMIT_SHA"))]
-    pub last_commit_sha: String,
 
     #[clap(skip)]
     pub services: Vec<ServiceConfig>,

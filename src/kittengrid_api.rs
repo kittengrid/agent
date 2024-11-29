@@ -42,7 +42,7 @@ pub async fn from_registration(config: &Config) -> Result<KittengridApi, Kitteng
             "vcs_provider": config.vcs_provider,
             "pull_request_vcs_id": config.pull_request_vcs_id,
             "project_vcs_id": config.project_vcs_id,
-            "workflow_id": config.workflow_id,
+            "workflow_run_id": config.workflow_run_id,
         }))
         .header("Authorization", format!("Bearer {}", config.api_key))
         .send()
@@ -159,7 +159,6 @@ impl KittengridApi {
                 "path": path,
                 "name": name,
                 "publish": self.config.start_services,
-                "sha": self.config.last_commit_sha,
             }))
             .send()
             .await;

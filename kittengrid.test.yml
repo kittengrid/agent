@@ -3,7 +3,7 @@ api_key: _some_token_
 api_url: http://web:3000
 vcs_provider: github
 vcs_id: 1337
-workflow_id: 12345678"
+workflow_run_id: 12345678"
 
 services:
   - name: test
