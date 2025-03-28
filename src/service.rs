@@ -240,6 +240,15 @@ impl Service {
         self.stderr.watch(stderr).await;
         self.status = ServiceStatus::Running;
 
+        if let Some(kittengrid_api) = &*kittengrid_api {
+            if let Err(e) = kittengrid_api
+                .services_update_status(self.id, crate::kittengrid_api::ServiceStatus::Started)
+                .await
+            {
+                error!("Error updating service status: {:?}", e);
+            }
+        }
+
         let process_controller = ProcessController::new(
             child,
             Arc::new({
