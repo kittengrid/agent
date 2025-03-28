@@ -165,13 +165,13 @@ impl KittengridAgent {
             return Err(KittengridAgentError::NotRegisteredError);
         }
         let services = self.services();
-        for (_, service) in services.descriptions().await {
+        for (id, service) in services.descriptions().await {
             // Register with API
             if let Err(e) = self
                 .api
                 .as_ref()
                 .unwrap()
-                .agents_create_service(service.name())
+                .agents_create_service(id, service.name())
                 .await
             {
                 error!("Failed to publish service: {}.", service.name());

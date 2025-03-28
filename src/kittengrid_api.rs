@@ -1,6 +1,7 @@
 use super::config::Config;
 use serde::Deserialize;
 use std::fmt;
+use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub struct KittengridApi {
@@ -193,11 +194,16 @@ impl KittengridApi {
     }
 
     /// Publish services to Kittengrid internal api
-    pub async fn agents_create_service(&self, name: String) -> Result<(), KittengridApiError> {
+    pub async fn agents_create_service(
+        &self,
+        id: Uuid,
+        name: String,
+    ) -> Result<(), KittengridApiError> {
         let res = self
             .post("api/agents/service")
             .json(&serde_json::json!({
                 "name": name,
+                "id": id.to_string(),
                 "sha": self.config.last_commit_sha,
             }))
             .send()
