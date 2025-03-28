@@ -151,7 +151,7 @@ impl KittengridAgent {
             let service = service.unwrap();
             let mut service = service.lock().await;
 
-            if let Err(e) = service.start().await {
+            if let Err(e) = service.start(Arc::new(self.api.clone())).await {
                 error!("Failed to spawn service: {}.", name);
                 return Err(KittengridAgentError::ServiceSpawnError(e));
             }
@@ -224,6 +224,11 @@ impl KittengridAgent {
     }
 
     pub async fn wait(&self, listener: tokio::net::TcpListener) {
-        crate::launch(listener, Arc::clone(&self.services)).await;
+        crate::launch(
+            listener,
+            Arc::clone(&self.services),
+            Arc::new(self.api.clone()),
+        )
+        .await;
     }
 }

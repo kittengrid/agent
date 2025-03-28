@@ -1,4 +1,5 @@
 use crate::service::{ServiceStream, Services};
+use crate::AxumState;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
@@ -54,25 +55,27 @@ use axum::extract::ws::CloseFrame;
 ///       "status" : "Stopped"
 ///    }
 /// ]
-pub async fn index(_claims: Claims, State(services): State<Arc<Services>>) -> impl IntoResponse {
+pub async fn index(_claims: Claims, State(state): State<Arc<AxumState>>) -> impl IntoResponse {
+    let services = state.services.clone();
     Json(services.to_json().await["services"].clone())
 }
 
 /// POST /public/services/:id/start
 ///
 /// Description: Starts the service by its id (404  if not found)
-#[axum::debug_handler]
 pub async fn start(
     _claims: Claims,
     path: Result<Path<uuid::Uuid>, PathRejection>,
-    State(services): State<Arc<Services>>,
+    State(state): State<Arc<AxumState>>,
 ) -> Response {
+    let services = state.services.clone();
+    let kittengrid_api = state.kittengrid_api.clone();
     let id = match find_service(path, &services).await {
         Ok(id) => id,
         Err(response) => return response,
     };
 
-    match services.start_service(id).await {
+    match services.start_service(id, kittengrid_api).await {
         Ok(_) => ok_response(),
         Err(e) => error_response(Box::new(e)),
     }
@@ -85,14 +88,17 @@ pub async fn start(
 pub async fn stop(
     _claims: Claims,
     path: Result<Path<uuid::Uuid>, PathRejection>,
-    State(services): State<Arc<Services>>,
+    State(state): State<Arc<AxumState>>,
 ) -> Response {
+    let services = state.services.clone();
+    let kittengrid_api = state.kittengrid_api.clone();
+
     let id = match find_service(path, &services).await {
         Ok(id) => id,
         Err(response) => return response,
     };
 
-    match services.stop_service(id).await {
+    match services.stop_service(id, kittengrid_api).await {
         Ok(_) => ok_response(),
         Err(e) => error_response(Box::new(e)),
     }
@@ -104,10 +110,12 @@ pub async fn stop(
 pub async fn stdout(
     Query(params): Query<StdoutStderrParams>,
     path: Result<Path<uuid::Uuid>, PathRejection>,
-    State(services): State<Arc<Services>>,
+    State(state): State<Arc<AxumState>>,
     ws: WebSocketUpgrade,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
+    let services = state.services.clone();
+
     match validate_token(&params.token) {
         Ok(_) => (),
         Err(response) => return response.into_response(),
@@ -132,10 +140,11 @@ pub struct StdoutStderrParams {
 pub async fn stderr(
     Query(params): Query<StdoutStderrParams>,
     path: Result<Path<uuid::Uuid>, PathRejection>,
-    State(services): State<Arc<Services>>,
+    State(state): State<Arc<AxumState>>,
     ws: WebSocketUpgrade,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
+    let services = state.services.clone();
     match validate_token(&params.token) {
         Ok(_) => (),
         Err(response) => return response.into_response(),
@@ -303,6 +312,8 @@ impl IntoResponse for AuthError {
 #[cfg(test)]
 mod test {
     use crate::test_utils::*;
+    use std::sync::Arc;
+
     use futures_util::StreamExt;
 
     use reqwest::StatusCode;
@@ -368,7 +379,7 @@ mod test {
         )
         .await;
         assert!(ws_stream.is_err());
-        server_test.services().stop().await.unwrap();
+        server_test.services().stop(Arc::new(None)).await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
@@ -382,7 +393,7 @@ mod test {
         ))
         .await;
         assert!(ws_stream.is_err());
-        server_test.services().stop().await.unwrap();
+        server_test.services().stop(Arc::new(None)).await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
@@ -412,7 +423,7 @@ mod test {
         assert!(receiver.next().await.is_some());
         assert!(receiver.next().await.is_some());
 
-        server_test.services().stop().await.unwrap();
+        server_test.services().stop(Arc::new(None)).await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
@@ -442,7 +453,7 @@ mod test {
         assert!(receiver.next().await.is_some());
         assert!(receiver.next().await.is_some());
 
-        server_test.services().stop().await.unwrap();
+        server_test.services().stop(Arc::new(None)).await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
@@ -461,7 +472,7 @@ mod test {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        server_test.services().stop().await.unwrap();
+        server_test.services().stop(Arc::new(None)).await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
@@ -498,7 +509,7 @@ mod test {
             .unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
-        server_test.services().stop().await.unwrap();
+        server_test.services().stop(Arc::new(None)).await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
@@ -531,7 +542,7 @@ mod test {
 
         assert_eq!(response.status(), StatusCode::OK);
 
-        server_test.services().stop().await.unwrap();
+        server_test.services().stop(Arc::new(None)).await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
@@ -563,7 +574,7 @@ mod test {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
-        server_test.services().stop().await.unwrap();
+        server_test.services().stop(Arc::new(None)).await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
@@ -618,7 +629,7 @@ mod test {
         assert_eq!(data[0]["description"]["name"].as_str().unwrap(), "test");
         assert_eq!(data[0]["status"].as_str().unwrap(), "Running");
 
-        server_test.services().stop().await.unwrap();
+        server_test.services().stop(Arc::new(None)).await.unwrap();
     }
 
     async fn first_service_id(services: &crate::service::Services) -> uuid::Uuid {

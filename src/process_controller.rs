@@ -23,9 +23,9 @@ pub enum ProcessControllerError {
 
 type OnStopCallback = dyn Fn(ExitStatus) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync;
 
-/// This struct is used to control a process, it allows to stop the process and wait for it to finish.
-/// The whole point of this is being able to be able to execute a callback when the process stop, either
-/// because it crashed or because it was stopped.
+/// This struct is used to control a process, it allows you to stop the process and wait for it to finish.
+/// The whole point of this is being able to execute a callback when the process stops, either
+/// because it crashed or because it was explictly stopped.
 /// The callback is executed in the same thread that created the ProcessController, and the status
 /// of the process is passed to the callback.
 pub struct ProcessController {

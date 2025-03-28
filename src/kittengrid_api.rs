@@ -2,7 +2,7 @@ use super::config::Config;
 use serde::Deserialize;
 use std::fmt;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct KittengridApi {
     api_token: String,
     api_url: String,
@@ -121,6 +121,7 @@ impl Endpoint {
 #[derive(Debug, Clone)]
 pub enum PullRequestStatus {
     Created,
+    Degraded,
     Booting,
     Sleeping,
     Error,
@@ -133,12 +134,35 @@ impl fmt::Display for PullRequestStatus {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             PullRequestStatus::Created => write!(f, "created"),
+            PullRequestStatus::Degraded => write!(f, "degraded"),
             PullRequestStatus::Booting => write!(f, "booting"),
             PullRequestStatus::Sleeping => write!(f, "sleeping"),
             PullRequestStatus::Error => write!(f, "error"),
             PullRequestStatus::Running => write!(f, "running"),
             PullRequestStatus::ShuttingDown => write!(f, "shutting_down"),
             PullRequestStatus::Merged => write!(f, "merged"),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+
+pub enum ServiceStatus {
+    Stopped,
+    Starting,
+    Started,
+    Errored,
+    Stopping,
+}
+
+impl fmt::Display for ServiceStatus {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ServiceStatus::Stopped => write!(f, "stopped"),
+            ServiceStatus::Starting => write!(f, "starting"),
+            ServiceStatus::Started => write!(f, "started"),
+            ServiceStatus::Errored => write!(f, "errored"),
+            ServiceStatus::Stopping => write!(f, "stopping"),
         }
     }
 }
@@ -260,6 +284,31 @@ impl KittengridApi {
                         Ok(data) => Ok(data),
                         Err(e) => Err(KittengridApiError::DeserializationError(e.to_string())),
                     }
+                } else {
+                    Err(process_api_status_error_from_response(res).await)
+                }
+            }
+            Err(e) => Err(KittengridApiError::RequestError(e)),
+        }
+    }
+
+    // Updates the status of a given service
+    pub async fn services_update_status(
+        &self,
+        id: uuid::Uuid,
+        status: ServiceStatus,
+    ) -> Result<(), KittengridApiError> {
+        let res = self
+            .put(&format!("api/services/{}", id))
+            .json(&serde_json::json!({
+                "status": status.to_string(),
+            }))
+            .send()
+            .await;
+        match res {
+            Ok(res) => {
+                if res.status().is_success() {
+                    Ok(())
                 } else {
                     Err(process_api_status_error_from_response(res).await)
                 }
