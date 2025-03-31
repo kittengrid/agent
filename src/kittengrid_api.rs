@@ -1,8 +1,9 @@
 use super::config::Config;
 use serde::Deserialize;
 use std::fmt;
+use uuid::Uuid;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct KittengridApi {
     api_token: String,
     api_url: String,
@@ -121,6 +122,7 @@ impl Endpoint {
 #[derive(Debug, Clone)]
 pub enum PullRequestStatus {
     Created,
+    Degraded,
     Booting,
     Sleeping,
     Error,
@@ -133,12 +135,51 @@ impl fmt::Display for PullRequestStatus {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             PullRequestStatus::Created => write!(f, "created"),
+            PullRequestStatus::Degraded => write!(f, "degraded"),
             PullRequestStatus::Booting => write!(f, "booting"),
             PullRequestStatus::Sleeping => write!(f, "sleeping"),
             PullRequestStatus::Error => write!(f, "error"),
             PullRequestStatus::Running => write!(f, "running"),
             PullRequestStatus::ShuttingDown => write!(f, "shutting_down"),
             PullRequestStatus::Merged => write!(f, "merged"),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum ServiceStatus {
+    Created,
+    Running,
+    Paused,
+    Exited,
+    Dead,
+    Restarting,
+}
+
+#[derive(Debug, Clone)]
+pub enum HealthStatus {
+    Healthy,
+    Unhealthy,
+}
+
+impl fmt::Display for HealthStatus {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            HealthStatus::Healthy => write!(f, "healthy"),
+            HealthStatus::Unhealthy => write!(f, "unhealthy"),
+        }
+    }
+}
+
+impl fmt::Display for ServiceStatus {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ServiceStatus::Created => write!(f, "created"),
+            ServiceStatus::Running => write!(f, "running"),
+            ServiceStatus::Paused => write!(f, "paused"),
+            ServiceStatus::Exited => write!(f, "exited"),
+            ServiceStatus::Dead => write!(f, "dead"),
+            ServiceStatus::Restarting => write!(f, "restarting"),
         }
     }
 }
@@ -169,11 +210,16 @@ impl KittengridApi {
     }
 
     /// Publish services to Kittengrid internal api
-    pub async fn agents_create_service(&self, name: String) -> Result<(), KittengridApiError> {
+    pub async fn agents_create_service(
+        &self,
+        id: Uuid,
+        name: String,
+    ) -> Result<(), KittengridApiError> {
         let res = self
             .post("api/agents/service")
             .json(&serde_json::json!({
                 "name": name,
+                "id": id.to_string(),
                 "sha": self.config.last_commit_sha,
             }))
             .send()
@@ -260,6 +306,32 @@ impl KittengridApi {
                         Ok(data) => Ok(data),
                         Err(e) => Err(KittengridApiError::DeserializationError(e.to_string())),
                     }
+                } else {
+                    Err(process_api_status_error_from_response(res).await)
+                }
+            }
+            Err(e) => Err(KittengridApiError::RequestError(e)),
+        }
+    }
+
+    // Updates the status of a given service
+    pub async fn services_update_status(
+        &self,
+        id: uuid::Uuid,
+        status: Option<ServiceStatus>,
+        health_check: Option<HealthStatus>,
+    ) -> Result<(), KittengridApiError> {
+        let res = self
+            .put(&format!("api/services/{}", id))
+            .json(&serde_json::json!({
+                "status": status.to_string(),
+            }))
+            .send()
+            .await;
+        match res {
+            Ok(res) => {
+                if res.status().is_success() {
+                    Ok(())
                 } else {
                     Err(process_api_status_error_from_response(res).await)
                 }

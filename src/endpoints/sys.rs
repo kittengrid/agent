@@ -32,6 +32,7 @@ mod test {
     use crate::test_utils::*;
     use axum::http::StatusCode;
     use serde_json::json;
+    use std::sync::Arc;
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     async fn hello() {
@@ -46,7 +47,7 @@ mod test {
 
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.text().await.unwrap(), "kitty");
-        assert!(server_test.services().stop().await.is_ok());
+        assert!(server_test.services().stop(Arc::new(None)).await.is_ok());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
@@ -63,6 +64,6 @@ mod test {
 
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.text().await.unwrap(), "{}");
-        assert!(server_test.services().stop().await.is_ok());
+        assert!(server_test.services().stop(Arc::new(None)).await.is_ok());
     }
 }
