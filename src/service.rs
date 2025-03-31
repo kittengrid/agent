@@ -1,11 +1,15 @@
 use super::persisted_buf_reader_broadcaster::{BufferReceiver, PersistedBufReaderBroadcaster};
-use log::{debug, info};
+
+use crate::kittengrid_api::KittengridApi;
+use crate::process_controller::ProcessController;
+use log::{debug, error, info};
 use serde::ser::SerializeStruct;
 use serde::Serialize;
 use serde_json::json;
-use std::collections::HashMap;
+use std::{collections::HashMap, process::ExitStatus};
+
 use std::io::BufReader;
-use std::process::{Child, Command};
+use std::process::Command;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -67,7 +71,7 @@ impl Default for ServiceStatus {
 pub struct Service {
     id: uuid::Uuid,
     description: ServiceDescription,
-    child: Option<Child>,
+    process_controller: Option<ProcessController>,
     stdout: PersistedBufReaderBroadcaster,
     stderr: PersistedBufReaderBroadcaster,
     status: ServiceStatus,
@@ -169,16 +173,34 @@ impl Service {
 
     /// Stops the service
     /// It will stop the service sending a TERM signal, note that stdout/stderr channels will be kept open.
-    pub async fn stop(&mut self) -> std::io::Result<()> {
-        match self.child.take() {
-            Some(mut child) => {
+    pub async fn stop(
+        &mut self,
+        kittengrid_api: Arc<Option<KittengridApi>>,
+    ) -> std::io::Result<()> {
+        if let Some(kittengrid_api) = &*kittengrid_api {
+            if let Err(e) = kittengrid_api
+                .services_update_status(self.id, crate::kittengrid_api::ServiceStatus::Stopping)
+                .await
+            {
+                error!("Error updating service status: {:?}", e);
+            };
+        }
+
+        match self.process_controller.take() {
+            Some(mut process_controller) => {
                 info!(
                     "Sending TERM Signal to the service '{}'.",
                     self.description.name
                 );
-                child.kill()?;
-                child.wait()?;
-                self.status = ServiceStatus::Stopped;
+                match process_controller.stop().await {
+                    Ok(()) => {}
+                    Err(e) => {
+                        error!(
+                            "Error stopping service '{}': {:?}",
+                            self.description.name, e
+                        );
+                    }
+                };
             }
             None => {
                 info!("Service {} was not running", self.description.name);
@@ -189,8 +211,20 @@ impl Service {
 
     /// Starts the service
     /// It will spawn the service and start broadcasting the stdout and stderr to the subscribers.
-    pub async fn start(&mut self) -> std::io::Result<()> {
+    pub async fn start(
+        &mut self,
+        kittengrid_api: Arc<Option<KittengridApi>>,
+    ) -> std::io::Result<()> {
         debug!("Starting service '{}'", self.description.name);
+        if let Some(kittengrid_api) = &*kittengrid_api {
+            if let Err(e) = kittengrid_api
+                .services_update_status(self.id, crate::kittengrid_api::ServiceStatus::Starting)
+                .await
+            {
+                error!("Error updating service status: {:?}", e);
+            }
+        }
+
         let mut cmd = Command::new(&self.description.cmd);
 
         cmd.args(&self.description.args)
@@ -204,8 +238,57 @@ impl Service {
 
         let stderr = BufReader::new(child.stderr.take().expect("stderr is None"));
         self.stderr.watch(stderr).await;
-        self.child = Some(child);
         self.status = ServiceStatus::Running;
+
+        if let Some(kittengrid_api) = &*kittengrid_api {
+            if let Err(e) = kittengrid_api
+                .services_update_status(self.id, crate::kittengrid_api::ServiceStatus::Started)
+                .await
+            {
+                error!("Error updating service status: {:?}", e);
+            }
+        }
+
+        let process_controller = ProcessController::new(
+            child,
+            Arc::new({
+                let description = self.description.name.clone();
+                let id = self.id;
+
+                move |status: ExitStatus| {
+                    let description = description.clone();
+                    let kittengrid_api = kittengrid_api.clone();
+                    let service_status = match status.code() {
+                        Some(0) => crate::kittengrid_api::ServiceStatus::Stopped,
+                        Some(code) => {
+                            error!("Service '{}' exited with code {:?}", description, code);
+                            crate::kittengrid_api::ServiceStatus::Errored
+                        }
+                        None => crate::kittengrid_api::ServiceStatus::Stopped,
+                    };
+
+                    Box::pin(async move {
+                        if let Some(kittengrid_api) = &*kittengrid_api {
+                            match kittengrid_api
+                                .services_update_status(id, service_status)
+                                .await
+                            {
+                                Ok(()) => {
+                                    info!("Service '{}' status updated to Stopped", description)
+                                }
+                                Err(e) => error!(
+                                    "Error updating service '{}' status to Stopped: {:?}",
+                                    description, e
+                                ),
+                            };
+                        };
+                    })
+                }
+            }),
+        )
+        .await;
+        self.process_controller = Some(process_controller);
+
         Ok(())
     }
 }
@@ -228,7 +311,7 @@ impl Services {
         self.services
             .lock()
             .await
-            .insert(service.id.clone(), Arc::new(Mutex::new(service)));
+            .insert(service.id, Arc::new(Mutex::new(service)));
     }
 
     /// Returns a service by its name.
@@ -248,7 +331,11 @@ impl Services {
     }
 
     /// Stops a service by its id.
-    pub async fn stop_service(&self, id: uuid::Uuid) -> std::io::Result<()> {
+    pub async fn stop_service(
+        &self,
+        id: uuid::Uuid,
+        kittengrid_api: Arc<Option<KittengridApi>>,
+    ) -> std::io::Result<()> {
         let service = self.services.lock().await.get(&id).cloned();
 
         if service.is_none() {
@@ -260,7 +347,7 @@ impl Services {
 
         let service = service.unwrap();
         let mut service = service.lock().await;
-        service.stop().await
+        service.stop(kittengrid_api).await
     }
 
     pub async fn to_json(&self) -> serde_json::Value {
@@ -294,7 +381,11 @@ impl Services {
     }
 
     /// Starts a service by its id.
-    pub async fn start_service(&self, id: uuid::Uuid) -> std::io::Result<()> {
+    pub async fn start_service(
+        &self,
+        id: uuid::Uuid,
+        kittengrid_api: Arc<Option<KittengridApi>>,
+    ) -> std::io::Result<()> {
         let service = self.services.lock().await.get(&id).cloned();
 
         if service.is_none() {
@@ -306,7 +397,7 @@ impl Services {
 
         let service = service.unwrap();
         let mut service = service.lock().await;
-        service.start().await
+        service.start(kittengrid_api).await
     }
 
     /// Returns a stream reader for a service if found.
@@ -362,11 +453,15 @@ impl Services {
     }
 
     /// Stops every service.
-    pub async fn stop(&self) -> std::io::Result<()> {
+    pub async fn stop(&self, kittengrid_api: Arc<Option<KittengridApi>>) -> std::io::Result<()> {
         debug!("Stopping all services");
         for taken_service in self.services.lock().await.values() {
             debug!("Stopping service '{}'", taken_service.lock().await.name());
-            taken_service.lock().await.stop().await?;
+            taken_service
+                .lock()
+                .await
+                .stop(kittengrid_api.clone())
+                .await?;
         }
         Ok(())
     }
@@ -395,7 +490,7 @@ mod test {
         assert_eq!(service.description.cmd, "test");
         assert_eq!(service.description.args, vec!["--port".to_string()]);
         assert_eq!(service.description.env, HashMap::new());
-        assert!(service.child.is_none());
+        assert!(service.process_controller.is_none());
 
         // Assert we use the name as default command
         config.cmd = None;
@@ -412,7 +507,7 @@ mod test {
             ..Default::default()
         };
         let mut service = Service::from(config);
-        let result = service.start().await;
+        let result = service.start(Arc::new(None)).await;
 
         assert!(result.is_ok());
         let mut receiver = service.subscribe_to_stream(ServiceStream::Stdout).await;
@@ -427,14 +522,14 @@ mod test {
         let data = receiver.recv().await;
         assert_eq!(data.unwrap(), Bytes::from("1\n2\n"));
 
-        service.stop().await.unwrap();
+        service.stop(Arc::new(None)).await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     async fn spawn_log() {
         initialize_tests();
         let mut service = crate::test_utils::log_generator_service();
-        let result = service.start().await;
+        let result = service.start(Arc::new(None)).await;
 
         assert!(result.is_ok());
         let mut receiver = service.subscribe_to_stream(ServiceStream::Stdout).await;
@@ -445,22 +540,22 @@ mod test {
         service
             .unsubscribe_from_stream(receiver, ServiceStream::Stdout)
             .await;
-        service.stop().await.unwrap();
+        service.stop(Arc::new(None)).await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     async fn lifecycle() {
         initialize_tests();
         let mut service = crate::test_utils::log_generator_service();
-        let result = service.start().await;
+        let result = service.start(Arc::new(None)).await;
         assert!(result.is_ok());
         let mut receiver = service.subscribe_to_stream(ServiceStream::Stdout).await;
         let data = receiver.recv().await;
         assert!(data.is_some());
         let data = receiver.recv().await;
         assert!(data.is_some());
-        service.stop().await.unwrap();
-        let result = service.start().await;
+        service.stop(Arc::new(None)).await.unwrap();
+        let result = service.start(Arc::new(None)).await;
         assert!(result.is_ok());
         let data = receiver.recv().await;
         assert!(data.is_some());
@@ -468,6 +563,6 @@ mod test {
         service
             .unsubscribe_from_stream(receiver, ServiceStream::Stdout)
             .await;
-        service.stop().await.unwrap();
+        service.stop(Arc::new(None)).await.unwrap();
     }
 }
