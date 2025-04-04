@@ -1,9 +1,11 @@
 use super::persisted_buf_reader_broadcaster::{BufferReceiver, PersistedBufReaderBroadcaster};
-
 use crate::kittengrid_api::KittengridApi;
 use crate::process_controller::ProcessController;
 use log::{debug, error, info};
 use serde::ser::SerializeStruct;
+use std::future::Future;
+use std::pin::Pin;
+
 use serde::Serialize;
 use serde_json::json;
 use std::{collections::HashMap, process::ExitStatus};
@@ -247,41 +249,98 @@ impl Service {
             }
         }
 
+        let on_stop_callback = Arc::new(Self::create_on_exit_callback(
+            self.description.name.clone(),
+            self.id,
+            Arc::clone(&kittengrid_api),
+        ));
+
+        let health_check = self.health_check().map(|health_check| {
+            crate::process_controller::HealthCheck::from_config(health_check, self.port())
+        });
+
+        let on_health_status_change_callback = Arc::new(Self::create_health_status_callback(
+            self.description.name.clone(),
+            self.id,
+            Arc::clone(&kittengrid_api),
+        ));
+
         let process_controller = ProcessController::new(
             child,
-            Arc::new({
-                let description = self.description.name.clone();
-                let id = self.id;
-
-                move |status: ExitStatus| {
-                    let description = description.clone();
-                    let service_status = crate::kittengrid_api::ServiceStatus::Exited;
-                    let kittengrid_api = kittengrid_api.clone();
-                    let exit_status = status.code();
-
-                    Box::pin(async move {
-                        if let Some(kittengrid_api) = &*kittengrid_api {
-                            match kittengrid_api
-                                .services_update_status(id, Some(service_status), None, exit_status)
-                                .await
-                            {
-                                Ok(()) => {
-                                    info!("Service '{}' status updated to Stopped", description)
-                                }
-                                Err(e) => error!(
-                                    "Error updating service '{}' status to Stopped: {:?}",
-                                    description, e
-                                ),
-                            };
-                        };
-                    })
-                }
-            }),
+            on_stop_callback,
+            health_check,
+            Some(on_health_status_change_callback),
         )
         .await;
         self.process_controller = Some(process_controller);
 
         Ok(())
+    }
+
+    // Returns the callback that will be called when the service stops.
+    // It simply makes a call to kittengrid api to update the service status.
+    fn create_on_exit_callback(
+        service_name: String,
+        service_id: uuid::Uuid,
+        kittengrid_api: Arc<Option<KittengridApi>>,
+    ) -> impl Fn(ExitStatus) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync {
+        move |status: ExitStatus| {
+            let description = service_name.clone();
+            let id = service_id;
+            let service_status = crate::kittengrid_api::ServiceStatus::Exited;
+            let kittengrid_api = Arc::clone(&kittengrid_api);
+            let exit_status = status.code();
+
+            Box::pin(async move {
+                if let Some(kittengrid_api) = &*kittengrid_api {
+                    match kittengrid_api
+                        .services_update_status(id, Some(service_status), None, exit_status)
+                        .await
+                    {
+                        Ok(()) => {
+                            info!("Service '{}' status updated to Stopped", description)
+                        }
+                        Err(e) => error!(
+                            "Error updating service '{}' status to Stopped: {:?}",
+                            description, e
+                        ),
+                    };
+                };
+            })
+        }
+    }
+
+    // Returns the callback that will be called when the service health status
+    // changes.
+    // It simply makes a call to kittengrid api to update the service status.
+    fn create_health_status_callback(
+        service_name: String,
+        service_id: uuid::Uuid,
+        kittengrid_api: Arc<Option<KittengridApi>>,
+    ) -> impl Fn(crate::HealthStatus) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync
+    {
+        move |status: crate::HealthStatus| {
+            let description = service_name.clone();
+            let id = service_id;
+            let kittengrid_api = Arc::clone(&kittengrid_api);
+
+            Box::pin(async move {
+                if let Some(kittengrid_api) = &*kittengrid_api {
+                    match kittengrid_api
+                        .services_update_status(id, None, Some(status), None)
+                        .await
+                    {
+                        Ok(()) => {
+                            info!("Service '{}' status updated to Stopped", description)
+                        }
+                        Err(e) => error!(
+                            "Error updating service '{}' status to Stopped: {:?}",
+                            description, e
+                        ),
+                    };
+                };
+            })
+        }
     }
 }
 

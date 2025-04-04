@@ -191,7 +191,7 @@ impl KittengridAgent {
             // Register with API
             let path = match service.health_check() {
                 None => None,
-                Some(health_check) => health_check.path,
+                Some(health_check) => Some(health_check.path),
             };
 
             if let Err(e) = self

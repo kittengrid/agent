@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 
+use std::fmt;
 use std::sync::Arc;
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 mod api_error;
@@ -26,6 +27,21 @@ extern crate log;
 pub struct AxumState {
     services: Arc<crate::service::Services>,
     kittengrid_api: Arc<Option<kittengrid_api::KittengridApi>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Copy)]
+pub enum HealthStatus {
+    Healthy,
+    Unhealthy,
+}
+
+impl fmt::Display for HealthStatus {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            HealthStatus::Healthy => write!(f, "healthy"),
+            HealthStatus::Unhealthy => write!(f, "unhealthy"),
+        }
+    }
 }
 
 pub fn router(state: AxumState) -> Router {

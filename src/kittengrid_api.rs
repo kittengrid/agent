@@ -156,21 +156,6 @@ pub enum ServiceStatus {
     Restarting,
 }
 
-#[derive(Debug, Clone)]
-pub enum HealthStatus {
-    Healthy,
-    Unhealthy,
-}
-
-impl fmt::Display for HealthStatus {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            HealthStatus::Healthy => write!(f, "healthy"),
-            HealthStatus::Unhealthy => write!(f, "unhealthy"),
-        }
-    }
-}
-
 impl fmt::Display for ServiceStatus {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -319,7 +304,7 @@ impl KittengridApi {
         &self,
         id: uuid::Uuid,
         status: Option<ServiceStatus>,
-        health_status: Option<HealthStatus>,
+        health_status: Option<crate::HealthStatus>,
         exit_status: Option<i32>,
     ) -> Result<(), KittengridApiError> {
         let mut payload = serde_json::Map::new();
