@@ -147,23 +147,39 @@ impl fmt::Display for PullRequestStatus {
 }
 
 #[derive(Debug, Clone)]
-
 pub enum ServiceStatus {
-    Stopped,
-    Starting,
-    Started,
-    Errored,
-    Stopping,
+    Created,
+    Running,
+    Paused,
+    Exited,
+    Dead,
+    Restarting,
+}
+
+#[derive(Debug, Clone)]
+pub enum HealthStatus {
+    Healthy,
+    Unhealthy,
+}
+
+impl fmt::Display for HealthStatus {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            HealthStatus::Healthy => write!(f, "healthy"),
+            HealthStatus::Unhealthy => write!(f, "unhealthy"),
+        }
+    }
 }
 
 impl fmt::Display for ServiceStatus {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            ServiceStatus::Stopped => write!(f, "stopped"),
-            ServiceStatus::Starting => write!(f, "starting"),
-            ServiceStatus::Started => write!(f, "started"),
-            ServiceStatus::Errored => write!(f, "errored"),
-            ServiceStatus::Stopping => write!(f, "stopping"),
+            ServiceStatus::Created => write!(f, "created"),
+            ServiceStatus::Running => write!(f, "running"),
+            ServiceStatus::Paused => write!(f, "paused"),
+            ServiceStatus::Exited => write!(f, "exited"),
+            ServiceStatus::Dead => write!(f, "dead"),
+            ServiceStatus::Restarting => write!(f, "restarting"),
         }
     }
 }
@@ -302,13 +318,36 @@ impl KittengridApi {
     pub async fn services_update_status(
         &self,
         id: uuid::Uuid,
-        status: ServiceStatus,
+        status: Option<ServiceStatus>,
+        health_status: Option<HealthStatus>,
+        exit_status: Option<i32>,
     ) -> Result<(), KittengridApiError> {
+        let mut payload = serde_json::Map::new();
+
+        if let Some(status) = &status {
+            payload.insert(
+                "status".to_string(),
+                serde_json::Value::String(status.to_string()),
+            );
+        }
+
+        if let Some(health_status) = &health_status {
+            payload.insert(
+                "health_status".to_string(),
+                serde_json::Value::String(health_status.to_string()),
+            );
+        }
+
+        if let Some(exit_status) = &exit_status {
+            payload.insert(
+                "exit_status".to_string(),
+                serde_json::Value::Number(serde_json::Number::from(*exit_status)),
+            );
+        }
+
         let res = self
             .put(&format!("api/services/{}", id))
-            .json(&serde_json::json!({
-                "status": status.to_string(),
-            }))
+            .json(&serde_json::Value::Object(payload))
             .send()
             .await;
         match res {

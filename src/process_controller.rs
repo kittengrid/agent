@@ -31,7 +31,6 @@ type OnStopCallback = dyn Fn(ExitStatus) -> Pin<Box<dyn Future<Output = ()> + Se
 pub struct ProcessController {
     handle: tokio::task::JoinHandle<Result<(), ProcessControllerError>>,
     signal_channel: Option<oneshot::Sender<ServiceCommand>>,
-    on_stop: Arc<OnStopCallback>,
 }
 
 impl fmt::Debug for ProcessController {
@@ -103,7 +102,6 @@ impl ProcessController {
         Self {
             handle,
             signal_channel: Some(signal_channel),
-            on_stop,
         }
     }
 }
