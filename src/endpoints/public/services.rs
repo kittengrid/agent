@@ -20,7 +20,7 @@ use axum_extra::{
     TypedHeader,
 };
 use jsonwebtoken::{decode, DecodingKey, Validation};
-use log::{error, info};
+use log::{debug, error, info};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -107,7 +107,7 @@ pub async fn stop(
 ///
 /// Description: Connects to the stdout of the service by its id (404  if not found)
 pub async fn stdout(
-    Query(params): Query<StdoutStderrParams>,
+    Query(params): Query<OutputStreamParams>,
     path: Result<Path<uuid::Uuid>, PathRejection>,
     State(state): State<Arc<AxumState>>,
     ws: WebSocketUpgrade,
@@ -128,8 +128,40 @@ pub async fn stdout(
     ws.on_upgrade(move |socket| handle_socket(socket, addr, id, services, ServiceStream::Stdout))
         .into_response()
 }
+
+/// GET /public/services/:id/combined_output
+///
+/// Description: Connects to the stdout and stderr of the service by its id (404  if not found)
+/// it will stream the stdout and stderr to the client using a json structure of:
+/// {
+///     "type": "stdout" | "stderr",
+///     "data": "data"
+///     "timestamp": "2023-01-01T00:00:00Z"
+/// }
+pub async fn combined_output(
+    Query(params): Query<OutputStreamParams>,
+    path: Result<Path<uuid::Uuid>, PathRejection>,
+    State(state): State<Arc<AxumState>>,
+    ws: WebSocketUpgrade,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+) -> Response {
+    let services = state.services.clone();
+
+    match validate_token(&params.token) {
+        Ok(_) => (),
+        Err(response) => return response.into_response(),
+    }
+
+    let id = match find_service(path, &services).await {
+        Ok(id) => id,
+        Err(response) => return response,
+    };
+
+    ws.on_upgrade(move |socket| handle_socket_combined(socket, addr, id, services))
+        .into_response()
+}
 #[derive(Debug, Deserialize)]
-pub struct StdoutStderrParams {
+pub struct OutputStreamParams {
     pub token: String,
 }
 
@@ -137,7 +169,7 @@ pub struct StdoutStderrParams {
 ///
 /// Description: Connects to the stderr of the service by its id (404  if not found)
 pub async fn stderr(
-    Query(params): Query<StdoutStderrParams>,
+    Query(params): Query<OutputStreamParams>,
     path: Result<Path<uuid::Uuid>, PathRejection>,
     State(state): State<Arc<AxumState>>,
     ws: WebSocketUpgrade,
@@ -188,6 +220,91 @@ async fn handle_socket(
         .await
     {
         error!("Could not unsubscribe from {id} {stream} channel! {e}");
+    }
+
+    if let Err(e) = socket
+        .send(Message::Close(Some(CloseFrame {
+            code: axum::extract::ws::close_code::NORMAL,
+            reason: Cow::from("Closed by server"),
+        })))
+        .await
+    {
+        error!("Could not send close to {address}! {e}");
+    };
+}
+
+/// Actual websocket statemachine (one will be spawned per connection)
+async fn handle_socket_combined(
+    mut socket: WebSocket,
+    address: SocketAddr,
+    id: uuid::Uuid,
+    services: Arc<crate::service::Services>,
+) {
+    let mut stdout_stream_channel_receiver = match services
+        .subscribe_to_stream(id, ServiceStream::Stdout)
+        .await
+    {
+        Some(receiver) => receiver,
+        None => {
+            error!("Could not subscribe to {id} stdout channel");
+            return;
+        }
+    };
+
+    let mut stderr_stream_channel_receiver = match services
+        .subscribe_to_stream(id, ServiceStream::Stderr)
+        .await
+    {
+        Some(receiver) => receiver,
+        None => {
+            error!("Could not subscribe to {id} stderr channel");
+            return;
+        }
+    };
+
+    while let (Some(data), source) = tokio::select! {
+        data = stdout_stream_channel_receiver.recv() => (data, ServiceStream::Stdout),
+        data = stderr_stream_channel_receiver.recv() => (data, ServiceStream::Stderr),
+    } {
+        debug!("Received data from {id}:");
+        let data = match source {
+            ServiceStream::Stdout => json!({
+                "type": "stdout",
+                "data": serde_json::to_vec(&data.to_vec()).unwrap(),
+                "timestamp": SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+            }),
+            ServiceStream::Stderr => json!({
+                "type": "stderr",
+                "data": serde_json::to_vec(&data.to_vec()).unwrap(),
+                "timestamp": SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+            }),
+        };
+
+        if socket.send(Message::Text(data.to_string())).await.is_err() {
+            error!("Could not send data to {address}!");
+            break;
+        }
+    }
+
+    info!("Websocket disconnected, dropping internal stream.");
+    if let Err(e) = services
+        .unsubscribe_from_stream(id, ServiceStream::Stdout, stdout_stream_channel_receiver)
+        .await
+    {
+        error!("Could not unsubscribe from {id} stdout channel! {e}");
+    }
+
+    if let Err(e) = services
+        .unsubscribe_from_stream(id, ServiceStream::Stderr, stderr_stream_channel_receiver)
+        .await
+    {
+        error!("Could not unsubscribe from {id} stderr channel! {e}");
     }
 
     if let Err(e) = socket
@@ -425,7 +542,44 @@ mod test {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
-    async fn stderr() {
+    async fn test_combined_output() {
+        initialize_tests();
+        let server_test = ServerTest::new(true).await;
+        let service_id = first_service_id(&server_test.services()).await;
+        let ws_stream = match connect_async(server_test.url_for_with_protocol(
+            "ws",
+            &format!(
+                "/public/services/{service_id}/combined_output?token={}",
+                server_test.valid_token()
+            ),
+        ))
+        .await
+        {
+            Ok((stream, _)) => stream,
+            Err(err) => {
+                eprintln!("Error: {:?}", err);
+
+                panic!("Could not connect to server");
+            }
+        };
+
+        let (_, mut receiver) = ws_stream.split();
+        let data_received = receiver
+            .next()
+            .await
+            .unwrap()
+            .expect("Failed to receive data");
+
+        // Check if the data is in the expected format
+        let data: serde_json::Value = serde_json::from_slice(&data_received.into_data()).unwrap();
+
+        assert!(data["type"] == "stdout" || data["type"] == "stderr");
+        assert!(data["data"].is_array());
+        assert!(data["timestamp"].is_number());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+    async fn test_stderr() {
         initialize_tests();
         let server_test = ServerTest::new(true).await;
         let service_id = first_service_id(&server_test.services()).await;
