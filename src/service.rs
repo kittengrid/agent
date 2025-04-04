@@ -173,19 +173,7 @@ impl Service {
 
     /// Stops the service
     /// It will stop the service sending a TERM signal, note that stdout/stderr channels will be kept open.
-    pub async fn stop(
-        &mut self,
-        kittengrid_api: Arc<Option<KittengridApi>>,
-    ) -> std::io::Result<()> {
-        if let Some(kittengrid_api) = &*kittengrid_api {
-            if let Err(e) = kittengrid_api
-                .services_update_status(self.id, crate::kittengrid_api::ServiceStatus::Stopping)
-                .await
-            {
-                error!("Error updating service status: {:?}", e);
-            };
-        }
-
+    pub async fn stop(&mut self) -> std::io::Result<()> {
         match self.process_controller.take() {
             Some(mut process_controller) => {
                 info!(
@@ -218,7 +206,12 @@ impl Service {
         debug!("Starting service '{}'", self.description.name);
         if let Some(kittengrid_api) = &*kittengrid_api {
             if let Err(e) = kittengrid_api
-                .services_update_status(self.id, crate::kittengrid_api::ServiceStatus::Starting)
+                .services_update_status(
+                    self.id,
+                    Some(crate::kittengrid_api::ServiceStatus::Created),
+                    None,
+                    None,
+                )
                 .await
             {
                 error!("Error updating service status: {:?}", e);
@@ -242,7 +235,12 @@ impl Service {
 
         if let Some(kittengrid_api) = &*kittengrid_api {
             if let Err(e) = kittengrid_api
-                .services_update_status(self.id, crate::kittengrid_api::ServiceStatus::Started)
+                .services_update_status(
+                    self.id,
+                    Some(crate::kittengrid_api::ServiceStatus::Running),
+                    None,
+                    None,
+                )
                 .await
             {
                 error!("Error updating service status: {:?}", e);
@@ -257,20 +255,14 @@ impl Service {
 
                 move |status: ExitStatus| {
                     let description = description.clone();
+                    let service_status = crate::kittengrid_api::ServiceStatus::Exited;
                     let kittengrid_api = kittengrid_api.clone();
-                    let service_status = match status.code() {
-                        Some(0) => crate::kittengrid_api::ServiceStatus::Stopped,
-                        Some(code) => {
-                            error!("Service '{}' exited with code {:?}", description, code);
-                            crate::kittengrid_api::ServiceStatus::Errored
-                        }
-                        None => crate::kittengrid_api::ServiceStatus::Stopped,
-                    };
+                    let exit_status = status.code();
 
                     Box::pin(async move {
                         if let Some(kittengrid_api) = &*kittengrid_api {
                             match kittengrid_api
-                                .services_update_status(id, service_status)
+                                .services_update_status(id, Some(service_status), None, exit_status)
                                 .await
                             {
                                 Ok(()) => {
@@ -331,11 +323,7 @@ impl Services {
     }
 
     /// Stops a service by its id.
-    pub async fn stop_service(
-        &self,
-        id: uuid::Uuid,
-        kittengrid_api: Arc<Option<KittengridApi>>,
-    ) -> std::io::Result<()> {
+    pub async fn stop_service(&self, id: uuid::Uuid) -> std::io::Result<()> {
         let service = self.services.lock().await.get(&id).cloned();
 
         if service.is_none() {
@@ -347,7 +335,7 @@ impl Services {
 
         let service = service.unwrap();
         let mut service = service.lock().await;
-        service.stop(kittengrid_api).await
+        service.stop().await
     }
 
     pub async fn to_json(&self) -> serde_json::Value {
@@ -453,15 +441,11 @@ impl Services {
     }
 
     /// Stops every service.
-    pub async fn stop(&self, kittengrid_api: Arc<Option<KittengridApi>>) -> std::io::Result<()> {
+    pub async fn stop(&self) -> std::io::Result<()> {
         debug!("Stopping all services");
         for taken_service in self.services.lock().await.values() {
             debug!("Stopping service '{}'", taken_service.lock().await.name());
-            taken_service
-                .lock()
-                .await
-                .stop(kittengrid_api.clone())
-                .await?;
+            taken_service.lock().await.stop().await?;
         }
         Ok(())
     }
@@ -522,7 +506,7 @@ mod test {
         let data = receiver.recv().await;
         assert_eq!(data.unwrap(), Bytes::from("1\n2\n"));
 
-        service.stop(Arc::new(None)).await.unwrap();
+        service.stop().await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
@@ -540,7 +524,7 @@ mod test {
         service
             .unsubscribe_from_stream(receiver, ServiceStream::Stdout)
             .await;
-        service.stop(Arc::new(None)).await.unwrap();
+        service.stop().await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
@@ -554,7 +538,7 @@ mod test {
         assert!(data.is_some());
         let data = receiver.recv().await;
         assert!(data.is_some());
-        service.stop(Arc::new(None)).await.unwrap();
+        service.stop().await.unwrap();
         let result = service.start(Arc::new(None)).await;
         assert!(result.is_ok());
         let data = receiver.recv().await;
@@ -563,6 +547,6 @@ mod test {
         service
             .unsubscribe_from_stream(receiver, ServiceStream::Stdout)
             .await;
-        service.stop(Arc::new(None)).await.unwrap();
+        service.stop().await.unwrap();
     }
 }

@@ -91,14 +91,13 @@ pub async fn stop(
     State(state): State<Arc<AxumState>>,
 ) -> Response {
     let services = state.services.clone();
-    let kittengrid_api = state.kittengrid_api.clone();
 
     let id = match find_service(path, &services).await {
         Ok(id) => id,
         Err(response) => return response,
     };
 
-    match services.stop_service(id, kittengrid_api).await {
+    match services.stop_service(id).await {
         Ok(_) => ok_response(),
         Err(e) => error_response(Box::new(e)),
     }
@@ -312,7 +311,6 @@ impl IntoResponse for AuthError {
 #[cfg(test)]
 mod test {
     use crate::test_utils::*;
-    use std::sync::Arc;
 
     use futures_util::StreamExt;
 
@@ -379,7 +377,7 @@ mod test {
         )
         .await;
         assert!(ws_stream.is_err());
-        server_test.services().stop(Arc::new(None)).await.unwrap();
+        server_test.services().stop().await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
@@ -393,7 +391,7 @@ mod test {
         ))
         .await;
         assert!(ws_stream.is_err());
-        server_test.services().stop(Arc::new(None)).await.unwrap();
+        server_test.services().stop().await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
@@ -423,7 +421,7 @@ mod test {
         assert!(receiver.next().await.is_some());
         assert!(receiver.next().await.is_some());
 
-        server_test.services().stop(Arc::new(None)).await.unwrap();
+        server_test.services().stop().await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
@@ -453,7 +451,7 @@ mod test {
         assert!(receiver.next().await.is_some());
         assert!(receiver.next().await.is_some());
 
-        server_test.services().stop(Arc::new(None)).await.unwrap();
+        server_test.services().stop().await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
@@ -472,7 +470,7 @@ mod test {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        server_test.services().stop(Arc::new(None)).await.unwrap();
+        server_test.services().stop().await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
@@ -509,7 +507,7 @@ mod test {
             .unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
-        server_test.services().stop(Arc::new(None)).await.unwrap();
+        server_test.services().stop().await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
@@ -542,7 +540,7 @@ mod test {
 
         assert_eq!(response.status(), StatusCode::OK);
 
-        server_test.services().stop(Arc::new(None)).await.unwrap();
+        server_test.services().stop().await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
@@ -574,7 +572,7 @@ mod test {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
-        server_test.services().stop(Arc::new(None)).await.unwrap();
+        server_test.services().stop().await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
@@ -629,7 +627,7 @@ mod test {
         assert_eq!(data[0]["description"]["name"].as_str().unwrap(), "test");
         assert_eq!(data[0]["status"].as_str().unwrap(), "Running");
 
-        server_test.services().stop(Arc::new(None)).await.unwrap();
+        server_test.services().stop().await.unwrap();
     }
 
     async fn first_service_id(services: &crate::service::Services) -> uuid::Uuid {

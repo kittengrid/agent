@@ -319,13 +319,35 @@ impl KittengridApi {
         &self,
         id: uuid::Uuid,
         status: Option<ServiceStatus>,
-        health_check: Option<HealthStatus>,
+        health_status: Option<HealthStatus>,
+        exit_status: Option<i32>,
     ) -> Result<(), KittengridApiError> {
+        let mut payload = serde_json::Map::new();
+
+        if let Some(status) = &status {
+            payload.insert(
+                "status".to_string(),
+                serde_json::Value::String(status.to_string()),
+            );
+        }
+
+        if let Some(health_status) = &health_status {
+            payload.insert(
+                "health_status".to_string(),
+                serde_json::Value::String(health_status.to_string()),
+            );
+        }
+
+        if let Some(exit_status) = &exit_status {
+            payload.insert(
+                "exit_status".to_string(),
+                serde_json::Value::Number(serde_json::Number::from(*exit_status)),
+            );
+        }
+
         let res = self
             .put(&format!("api/services/{}", id))
-            .json(&serde_json::json!({
-                "status": status.to_string(),
-            }))
+            .json(&serde_json::Value::Object(payload))
             .send()
             .await;
         match res {
