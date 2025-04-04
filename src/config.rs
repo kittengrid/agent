@@ -123,10 +123,10 @@ pub struct ServiceConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct HealthCheck {
-    pub interval: Option<u64>,
-    pub timeout: Option<u64>,
-    pub retries: Option<u64>,
-    pub path: Option<String>,
+    pub interval: u64,
+    pub timeout: u64,
+    pub retries: u64,
+    pub path: String,
 }
 
 #[cfg(test)]
