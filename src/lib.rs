@@ -58,6 +58,10 @@ pub fn router(state: AxumState) -> Router {
             get(endpoints::public::services::stderr),
         )
         .route(
+            "/public/services/:id/combined_output",
+            get(endpoints::public::services::combined_output),
+        )
+        .route(
             "/public/services/:id/stop",
             post(endpoints::public::services::stop),
         )
