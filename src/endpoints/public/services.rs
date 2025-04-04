@@ -267,24 +267,7 @@ async fn handle_socket_combined(
         data = stderr_stream_channel_receiver.recv() => (data, ServiceStream::Stderr),
     } {
         debug!("Received data from {id}:");
-        let data = match source {
-            ServiceStream::Stdout => json!({
-                "type": "stdout",
-                "data": serde_json::to_vec(&data.to_vec()).unwrap(),
-                "timestamp": SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs(),
-            }),
-            ServiceStream::Stderr => json!({
-                "type": "stderr",
-                "data": serde_json::to_vec(&data.to_vec()).unwrap(),
-                "timestamp": SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs(),
-            }),
-        };
+        let data = create_stream_output_json(&source, &data);
 
         if socket.send(Message::Text(data.to_string())).await.is_err() {
             error!("Could not send data to {address}!");
@@ -357,6 +340,20 @@ fn error_response(err: Box<dyn std::error::Error>) -> Response {
         Json(json!({"error": err.to_string()})),
     )
         .into_response()
+}
+
+fn create_stream_output_json(
+    stream_type: &ServiceStream,
+    data: &bytes::Bytes,
+) -> serde_json::Value {
+    json!({
+        "type": stream_type.to_string(),
+        "data": serde_json::to_vec(&data.to_vec()).unwrap(),
+        "timestamp": SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+    })
 }
 
 // For auth using jwt
