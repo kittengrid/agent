@@ -348,7 +348,7 @@ fn create_stream_output_json(
 ) -> serde_json::Value {
     json!({
         "type": stream_type.to_string(),
-        "data": serde_json::to_vec(&data.to_vec()).unwrap(),
+        "data": &data.to_vec(),
         "timestamp": SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()

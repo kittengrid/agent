@@ -1,0 +1,105 @@
+name: Build and Release Kittengrid Agent
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    name: Build Binaries
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [x86_64, aarch64]
+        include:
+          - arch: x86_64
+            target: x86_64-unknown-linux-gnu
+            bin_name: kittengrid-agent
+            artifact_name: kittengrid-agent-linux-amd64
+          - arch: aarch64
+            target: aarch64-unknown-linux-gnu
+            bin_name: kittengrid-agent
+            artifact_name: kittengrid-agent-linux-arm64
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
+          override: true
+      - name: Install Dependencies (all)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config musl-tools
+      - name: Install cross-compiler for aarch64
+        if: matrix.arch == 'aarch64'
+        run: |
+          sudo apt-get install gcc-aarch64-linux-gnu
+      - name: Build binary
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --profile release-with-debug --target ${{ matrix.target }}
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: x86_64-linux-gnu-gcc
+      - name: Package binary
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release-with-debug/${{ matrix.bin_name }} dist/
+          cd dist
+          tar -czvf ${{ matrix.artifact_name }}.tar.gz ${{ matrix.bin_name }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: dist/${{ matrix.artifact_name }}.tar.gz
+
+  create-release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        shell: bash
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Kittengrid Agent ${{ steps.get_version.outputs.VERSION }}
+          draft: false
+          prerelease: false
+          files: |
+            artifacts/kittengrid-agent-linux-amd64/*.tar.gz
+            artifacts/kittengrid-agent-linux-arm64/*.tar.gz
+          body: |
+            ## Kittengrid CLI ${{ steps.get_version.outputs.VERSION }}
+
+            ### Available Binaries:
+
+            - Linux x86_64 (Intel/AMD)
+            - Linux ARM64 (ARM)
+
+            ### Installation
+
+            1. Download the appropriate binary for your system
+            2. Extract it: `tar -xzf kittengrid-agent-*.tar.gz`
+            3. Move it to your PATH: `sudo mv kittengrid-agent /usr/local/bin/`
+            4. Make it executable: `chmod +x /usr/local/bin/kittengrid-agent`
