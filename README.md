@@ -20,7 +20,7 @@ This is usually ran automatically using the kittengrid/action GitHub Action.
 
 # KittenGrid Agent Configuration
 
-The KittenGrid agent uses a YAML configuration file to define services that should be managed. By default, the agent looks for `kittengrid.yml` in the current directory.
+The KittenGrid agent uses a YAML configuration file to define services that should be managed. By default, the agent looks for `kittengrid.yml` or `kittengrid.yaml` in the current directory.
 
 ## Configuration File Structure
 
@@ -117,4 +117,3 @@ The configuration file can be specified using:
 - Default: `kittengrid.yml` in the current directory
 
 The agent will also accept `kittengrid.yaml` as an alternative file extension.
-A standalone agent to execute docker-compose workload remotely
