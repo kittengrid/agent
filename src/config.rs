@@ -17,7 +17,21 @@ static CONFIG: Lazy<Config> = Lazy::new(|| {
         args = Args::parse();
     }
 
-    let mut config = if let Ok(f) = File::open(&args.config_path) {
+    let config_path = if let Some(path) = &args.config_path {
+        path.clone()
+    } else {
+        let default_paths = [
+            std::path::PathBuf::from("kittengrid.yml"),
+            std::path::PathBuf::from("kittengrid.yaml"),
+        ];
+        if let Some(path) = default_paths.iter().find(|p| p.exists()) {
+            path.clone()
+        } else {
+            panic!("No config file found, please provide a config file with --config, KITTENGRID_CONFIG environment variable or place it in the current directory as kittengrid.yml or kittengrid.yaml");
+        }
+    };
+
+    let mut config = if let Ok(f) = File::open(config_path) {
         // Parse config with serde
         match serde_yaml::from_reader::<_, <Config as ClapSerde>::Opt>(BufReader::new(f)) {
             // merge config already parsed from clap
@@ -28,6 +42,7 @@ static CONFIG: Lazy<Config> = Lazy::new(|| {
         // If there is not config file return only config parsed from clap
         Config::from(&mut args.config)
     };
+
     config.set_defaults_if_missing();
     config
 });
@@ -42,8 +57,8 @@ pub fn get_config() -> &'static Config {
 #[command(author, version, about, long_about = None)]
 pub struct Args {
     /// Config file with configuration using yaml, values in this file will be superseeded by command line arguments that in turn will be superseeded by environment variables
-    #[clap(short, long = "config", default_value = "kittengrid.yml")]
-    config_path: std::path::PathBuf,
+    #[clap(short, long = "config")]
+    config_path: Option<std::path::PathBuf>,
 
     /// Rest of arguments
     #[clap(flatten)]
