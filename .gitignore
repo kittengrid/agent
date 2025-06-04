@@ -9,3 +9,6 @@ tmp/home/*
 
 # Ours
 .env.local
+
+kittengrid.yaml
+kittengrid.yml
