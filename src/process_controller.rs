@@ -1,6 +1,6 @@
 use crate::config::HealthCheck as HealthCheckConfig;
 use crate::HealthStatus;
-use log::{error, info};
+use log::{debug, error};
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
@@ -27,6 +27,9 @@ pub enum ProcessControllerError {
 
     #[error("Join error: {0}")]
     JoinError(#[from] tokio::task::JoinError),
+
+    #[error("Error sending shutdown message: {0}")]
+    ChannelSendError(#[from] tokio::sync::broadcast::error::SendError<ServiceCommand>),
 }
 
 type OnStopCallback = dyn Fn(ExitStatus) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync;
@@ -75,11 +78,12 @@ pub enum ServiceCommand {
 }
 
 impl ProcessController {
-    pub async fn stop(&mut self) -> Result<(), ServiceCommand> {
+    pub async fn stop(&mut self) -> Result<(), ProcessControllerError> {
         let sender = self.stop_signal_sender.take().unwrap();
         if let Err(e) = sender.send(ServiceCommand::Stop) {
             error!("There was an error stopping: {}", e);
         }
+        self.wait().await?;
 
         Ok(())
     }
@@ -113,8 +117,10 @@ impl ProcessController {
             child,
             on_stop,
             stop_rx.resubscribe(),
+            stop_tx.clone(),
         ));
 
+        // Spawn the lifecycle check task if configured
         // Spawn the health check task if configured
         if let Some(health_check) = health_check {
             set.spawn(Self::spawn_health_check_task(
@@ -139,17 +145,16 @@ impl ProcessController {
         on_stop_health_state_changed: Option<Arc<OnStateChangedCallback>>,
     ) -> Result<(), ProcessControllerError> {
         let mut status = HealthStatus::Unhealthy;
-
         loop {
             tokio::select! {
                 msg = stop_rx.recv() => {
                     match msg {
                         Ok(ServiceCommand::Stop) => {
-                            info!("Received stop signal, shutting down health check task");
+                            debug!("Received stop signal, shutting down health check task");
                             break;
                         }
                         Err(e) => {
-                            info!("Health check channel error: {}, shutting down", e);
+                            error!("Health check channel error: {}, shutting down", e);
                             return Err(ProcessControllerError::BroadcastReceiveError(e));
                         }
                     }
@@ -177,11 +182,12 @@ impl ProcessController {
     /// It will wait for the process to finish and will gather the status,
     /// and will execute the callback with the status.
     /// It will also listen for the stop signal and will kill the process
-    /// if it receives the stop signal.
+    /// if it receives it.
     async fn spawn_process_monitor_task(
         mut child: Child,
         on_stop: Arc<OnStopCallback>,
         mut stop_rx: broadcast::Receiver<ServiceCommand>,
+        stop_tx: broadcast::Sender<ServiceCommand>,
     ) -> Result<(), ProcessControllerError> {
         loop {
             tokio::select! {
@@ -199,11 +205,18 @@ impl ProcessController {
                 _ = time::sleep(Duration::from_secs(1)) => {
                     match child.try_wait() {
                         Ok(Some(status)) => {
+                            // We signal the health check task to stop
+                            stop_tx.send(ServiceCommand::Stop)?;
+
                             on_stop(status).await;
                             return Ok(());
                         },
                         Ok(None) => {}
-                        Err(e) => return Err(ProcessControllerError::WaitError(e)),
+                        Err(e) => {
+                            stop_tx.send(ServiceCommand::Stop)?;
+
+                            return Err(ProcessControllerError::WaitError(e))
+                        },
                     }
                 }
             }
