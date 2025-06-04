@@ -15,11 +15,11 @@ jobs:
         arch: [x86_64, aarch64]
         include:
           - arch: x86_64
-            target: x86_64-unknown-linux-gnu
+            target: x86_64-unknown-linux-musl
             bin_name: kittengrid-agent
             artifact_name: kittengrid-agent-linux-amd64
           - arch: aarch64
-            target: aarch64-unknown-linux-gnu
+            target: aarch64-unknown-linux-musl
             bin_name: kittengrid-agent
             artifact_name: kittengrid-agent-linux-arm64
 
@@ -38,15 +38,15 @@ jobs:
       - name: Install cross-compiler for aarch64
         if: matrix.arch == 'aarch64'
         run: |
-          sudo apt-get install gcc-aarch64-linux-gnu
+          sudo apt-get install gcc-aarch64-linux-musl
       - name: Build binary
         uses: actions-rs/cargo@v1
         with:
           command: build
           args: --profile release-with-debug --target ${{ matrix.target }}
         env:
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: x86_64-linux-gnu-gcc
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-musl-gcc
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: x86_64-linux-musl-gcc
       - name: Package binary
         run: |
           mkdir -p dist

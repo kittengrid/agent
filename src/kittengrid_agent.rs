@@ -113,13 +113,6 @@ impl KittengridAgent {
                     return Err(KittengridAgentError::WireguardError(e));
                 }
             }
-
-            // block until all tun readers closed
-            // @TODO: Save joinhandle to clean shutdown.
-            tokio::spawn(async move {
-                info!("Starting kittengrid tunnel for device: {}.", device.name());
-                device.wait();
-            });
         }
 
         Ok(())
