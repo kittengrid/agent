@@ -1,11 +1,10 @@
 name: Build and Release Kittengrid Agent
 
 on:
-  push:
-    branches: [main]
-    tags:
-      - 'v*'
-
+ push:
+   branches: [main]
+   tags:
+     - 'v*'
 jobs:
   build:
     name: Build Binaries
@@ -25,28 +24,20 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
       - name: Install Rust
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
           target: ${{ matrix.target }}
           override: true
-      - name: Install Dependencies (all)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libssl-dev pkg-config musl-tools
-      - name: Install cross-compiler for aarch64
-        if: matrix.arch == 'aarch64'
-        run: |
-          sudo apt-get install gcc-aarch64-linux-musl
+
+      - name: Install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
       - name: Build binary
-        uses: actions-rs/cargo@v1
-        with:
-          command: build
-          args: --profile release-with-debug --target ${{ matrix.target }}
-        env:
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-musl-gcc
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: x86_64-linux-musl-gcc
+        run: cross build --profile release-with-debug --target ${{ matrix.target }}
+
       - name: Package binary
         run: |
           mkdir -p dist
