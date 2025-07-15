@@ -608,4 +608,33 @@ mod test {
             .await;
         service.stop().await.unwrap();
     }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+    async fn test_spawn_inherits_env_vars() {
+        initialize_tests();
+        let config = crate::config::ServiceConfig {
+            name: "/usr/bin/env".to_string(),
+            ..Default::default()
+        };
+        let mut service = Service::from(config);
+
+        std::env::set_var("TEST_ENV", "test_value");
+
+        let result = service.start(Arc::new(None)).await;
+        assert!(result.is_ok());
+
+        let mut receiver = service.subscribe_to_stream(ServiceStream::Stdout).await;
+
+        // consume until we get TEST_ENV=test_value
+        let mut found = false;
+        while let Some(data) = receiver.recv().await {
+            if data == *"TEST_ENV=test_value\n" {
+                found = true;
+                break;
+            }
+        }
+        assert!(found, "TEST_ENV=test_value not found in output");
+
+        service.stop().await.unwrap();
+    }
 }
