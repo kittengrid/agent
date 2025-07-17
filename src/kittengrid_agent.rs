@@ -196,7 +196,7 @@ impl KittengridAgent {
             self.api
                 .as_ref()
                 .unwrap()
-                .peers_create_service(id, &service.name(), service.port(), path)
+                .peers_create_service(id, &service.name(), service.port(), path, false)
                 .await?;
         }
         Ok(())
@@ -208,6 +208,7 @@ impl KittengridAgent {
         name: &str,
         port: u16,
         path: Option<String>,
+        wss: bool,
     ) -> Result<String, KittengridAgentError> {
         if self.api.is_none() {
             return Err(KittengridAgentError::NotRegisteredError);
@@ -217,7 +218,7 @@ impl KittengridAgent {
             .api
             .as_ref()
             .unwrap()
-            .peers_create_service(id, name, port, path)
+            .peers_create_service(id, name, port, path, wss)
             .await
         {
             Ok(response) => {

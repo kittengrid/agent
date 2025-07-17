@@ -259,6 +259,7 @@ impl KittengridApi {
         name: &str,
         port: u16,
         path: Option<String>,
+        wss: bool,
     ) -> Result<String, KittengridApiError> {
         let res = self
             .post("api/peers/service")
@@ -267,6 +268,7 @@ impl KittengridApi {
                 "port": port,
                 "path": path,
                 "name": name,
+                "wss": wss,
                 "publish": self.config.start_services,
             }))
             .send()
