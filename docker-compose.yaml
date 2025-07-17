@@ -4,6 +4,9 @@ x-agent: &agent
     dockerfile: docker/Dockerfile
     target: dev
   working_dir: /app
+  environment:
+    RUST_TRACING: debug
+    CARGO_TARGET_DIR: "/cargo-target/target"
   user: root
   stdin_open: true
   tty: true
@@ -19,6 +22,7 @@ x-agent: &agent
     - ./tmp/home:/home/kittengrid
     - ./docker/resolv.conf:/etc/resolv.conf
     - ./.env.local:/.env.local
+    - target:/cargo-target
 
 services:
   agent-01:
@@ -48,3 +52,6 @@ networks:
   kittengrid:
     name: kittengrid_kittengrid
     external: true
+
+volumes:
+  target:

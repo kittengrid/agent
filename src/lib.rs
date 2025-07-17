@@ -4,6 +4,7 @@ use std::fmt;
 use std::sync::Arc;
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 mod api_error;
+mod binary_utils;
 pub mod config;
 pub mod data_dir;
 mod endpoints;
@@ -17,6 +18,7 @@ use axum::{
 pub mod kittengrid_agent;
 pub mod persisted_buf_reader_broadcaster;
 pub mod service;
+pub mod ttyd;
 
 pub mod wireguard;
 
