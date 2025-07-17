@@ -74,7 +74,13 @@ async fn main() {
         {
             Ok(port) => {
                 match agent
-                    .register_service(id, "ttyd", port, Some(format!("/{}/token", id).to_string()))
+                    .register_service(
+                        id,
+                        "ttyd",
+                        port,
+                        Some(format!("/{}/token", id).to_string()),
+                        true,
+                    )
                     .await
                 {
                     Ok(public_url) => {
