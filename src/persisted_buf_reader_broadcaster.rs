@@ -2,6 +2,7 @@ use bytes::Bytes;
 use log::{debug, error, info};
 use std::collections::HashMap;
 use std::io::BufRead;
+use std::io::Write;
 use std::sync::{Arc, RwLock};
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -13,6 +14,9 @@ use tokio::sync::mpsc::{Receiver, Sender};
 ///   - Being able to read the stdout/stderr from several places.
 ///   - Being able to read the stdout/stderr from the beginning, even though
 ///     the stream has already started and you connect later.
+///
+/// It also optionally writes the data to stdout or stderr, depending on the output mode
+/// apart from broadcasting it to the receivers, defaults to None.
 ///
 /// # Example
 ///
@@ -30,11 +34,31 @@ use tokio::sync::mpsc::{Receiver, Sender};
 /// ```
 ///
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default, Debug)]
+pub enum OutputMode {
+    Stdout,
+    Stderr,
+
+    #[default]
+    None,
+}
+
+#[derive(Clone, Default)]
 pub struct PersistedBufReaderBroadcaster {
     channel_set: ChannelSet,
     join_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     cancel_token: tokio_util::sync::CancellationToken,
+    output_mode: OutputMode,
+}
+
+impl std::fmt::Debug for PersistedBufReaderBroadcaster {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PersistedBufReaderBroadcaster")
+            .field("channel_set", &self.channel_set)
+            .field("join_handle", &self.join_handle)
+            .field("cancel_token", &self.cancel_token)
+            .finish()
+    }
 }
 
 impl PersistedBufReaderBroadcaster {
@@ -67,7 +91,12 @@ impl PersistedBufReaderBroadcaster {
             channel_set,
             join_handle: Arc::new(Mutex::new(None)),
             cancel_token: tokio_util::sync::CancellationToken::new(),
+            output_mode: OutputMode::None,
         }
+    }
+
+    pub fn set_output_mode(&mut self, output_mode: OutputMode) {
+        self.output_mode = output_mode;
     }
 
     pub async fn close(&mut self) {
@@ -92,6 +121,7 @@ impl PersistedBufReaderBroadcaster {
             let cancel_token = self.cancel_token.clone();
             let channel_set = self.channel_set.clone();
             let mut buf = Vec::new();
+            let output_mode = self.output_mode.clone();
             async move {
                 loop {
                     tokio::select! {
@@ -106,6 +136,10 @@ impl PersistedBufReaderBroadcaster {
                                 debug!("EOF reached, stopping the task.");
                                 cancel_token.cancel();
                             } else {
+                                if !matches!(output_mode, OutputMode::None) {
+                                    Self::write_to_static_output(&output_mode, buf.clone()).await;
+                                }
+
                                 channel_set.broadcast(buf.clone().into()).await;
                                 buf.clear();
                                 debug!("Data sent");
@@ -118,6 +152,22 @@ impl PersistedBufReaderBroadcaster {
         });
 
         self.join_handle = Arc::new(Mutex::new(Some(join_handle)));
+    }
+
+    async fn write_to_static_output(output_mode: &OutputMode, buf: Vec<u8>) {
+        match output_mode {
+            OutputMode::Stdout => {
+                if let Err(e) = std::io::stdout().write_all(&buf) {
+                    error!("Error writing to stdout: {}", e);
+                }
+            }
+            OutputMode::Stderr => {
+                if let Err(e) = std::io::stderr().write_all(&buf) {
+                    error!("Error writing to stderr: {}", e);
+                }
+            }
+            OutputMode::None => {}
+        }
     }
 
     /// Waits for the tokio task to finish.
@@ -375,6 +425,26 @@ mod tests {
         writer.flush().expect("flush failed");
         assert_eq!(receiver.recv().await, Some(Bytes::from(data.to_vec())));
         assert_eq!(new_receiver.recv().await, Some(Bytes::from(data.to_vec())));
+
+        child.kill().expect("kill failed");
+        broadcaster.close().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 20)]
+    async fn test_write_to_stdout() {
+        let (stdout_writer, mut child) = StdoutWriter::new();
+        let mut writer = BufWriter::new(stdout_writer.stdin);
+
+        let mut broadcaster = PersistedBufReaderBroadcaster::new().await;
+        broadcaster.set_output_mode(OutputMode::Stdout);
+        broadcaster.watch(stdout_writer.stdout).await;
+
+        let output = crate::test_utils::capture_stdout(|| {
+            writer.write_all(b"foo\n").expect("write failed");
+            writer.flush().expect("flush failed");
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        });
+        assert!(output.contains("foo\n"), "Output should contain 'foo\\n'");
 
         child.kill().expect("kill failed");
         broadcaster.close().await;

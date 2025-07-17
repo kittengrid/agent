@@ -8,7 +8,6 @@ use std::sync::Once;
 
 use log::debug;
 use std::env;
-use std::fs::File;
 use std::io::BufReader;
 
 use crate::endpoints::public::services::Claims;
@@ -16,6 +15,13 @@ use std::process::Command;
 use std::process::Output;
 use std::sync::Arc;
 use std::{thread, time};
+
+use libc::{dup, dup2, fflush, STDOUT_FILENO};
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
+use std::os::unix::io::{AsRawFd, RawFd};
+
+use tempfile::tempfile;
 
 #[allow(dead_code)]
 pub fn debug_output(output: &Output) {
@@ -134,7 +140,7 @@ impl ServerTest {
             ServerTest::compile_log_generator();
 
             agent
-                .spawn_services()
+                .spawn_services(false)
                 .await
                 .expect("Failed to spawn services");
         }
@@ -173,5 +179,35 @@ impl StdoutWriter {
         let stdout = BufReader::new(child.stdout.take().expect("stdout is None"));
         let stdin = child.stdin.take().expect("stdin is None");
         (Self { stdout, stdin }, child)
+    }
+}
+
+pub fn capture_stdout<F: FnOnce()>(f: F) -> String {
+    unsafe {
+        // Create a temporary file to redirect stdout into
+        let mut temp_file = tempfile().expect("Failed to create tempfile");
+
+        // Save the original stdout
+        let original_fd: RawFd = dup(STDOUT_FILENO);
+
+        // Redirect stdout to the temporary file
+        dup2(temp_file.as_raw_fd(), STDOUT_FILENO);
+
+        // Call the function that writes to stdout
+        f();
+
+        // Flush stdout to ensure all output is written
+        fflush(std::ptr::null_mut());
+
+        // Restore original stdout
+        dup2(original_fd, STDOUT_FILENO);
+        libc::close(original_fd);
+
+        // Read from the temporary file
+        temp_file.seek(SeekFrom::Start(0)).unwrap();
+        let mut output = String::new();
+        temp_file.read_to_string(&mut output).unwrap();
+
+        output
     }
 }

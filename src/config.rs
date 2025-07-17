@@ -87,6 +87,9 @@ pub struct Config {
     #[arg(short, long, env("KITTENGRID_LOG_LEVEL"))]
     pub log_level: String,
 
+    #[arg(long, env("KITTENGRID_SHOW_SERVICES_OUTPUT"))]
+    pub show_services_output: bool,
+
     #[arg(short, long, env("KITTENGRID_WORK_DIR"))]
     pub work_directory: String,
 

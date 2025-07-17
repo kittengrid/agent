@@ -136,13 +136,19 @@ impl KittengridAgent {
     }
 
     /// Starts services in the agent.
-    pub async fn spawn_services(&self) -> Result<(), KittengridAgentError> {
+    pub async fn spawn_services(
+        &self,
+        show_services_output: bool,
+    ) -> Result<(), KittengridAgentError> {
         for (id, service) in self.services.descriptions().await {
             let name = service.name();
             info!("Spawning service: {} ({}).", id, name);
             let service = self.services.fetch(id).await;
             let service = service.unwrap();
             let mut service = service.lock().await;
+            if show_services_output {
+                service.show_output();
+            }
 
             if let Err(e) = service.start(Arc::new(self.api.clone())).await {
                 error!("Failed to spawn service: {}.", name);

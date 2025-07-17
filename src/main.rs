@@ -56,7 +56,7 @@ async fn main() {
         }
 
         info!("All interfaces up. Spawning services.");
-        match agent.spawn_services().await {
+        match agent.spawn_services(config.show_services_output).await {
             Ok(_) => {
                 info!("Successfully spawned services.");
             }
