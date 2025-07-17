@@ -124,6 +124,13 @@ impl Service {
         }
     }
 
+    pub fn show_output(&mut self) {
+        self.stdout
+            .set_output_mode(crate::persisted_buf_reader_broadcaster::OutputMode::Stdout);
+        self.stderr
+            .set_output_mode(crate::persisted_buf_reader_broadcaster::OutputMode::Stderr);
+    }
+
     pub async fn unsubscribe_from_stream(
         &mut self,
         receiver: BufferReceiver,

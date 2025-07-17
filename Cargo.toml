@@ -69,3 +69,7 @@ features = [
     "macro-diagnostics", # Enable better diagnostics for compile-time UUIDs
     "serde",
 ]
+
+[dev-dependencies]
+libc = "0.2.174"
+tempfile = "3"
