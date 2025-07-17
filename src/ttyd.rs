@@ -91,7 +91,7 @@ mod test {
     #[tokio::test]
     async fn test_ttyd_start() {
         let ttyd = Executable::default();
-        let port = ttyd.start().await.unwrap();
+        let port = ttyd.start("/test").await.unwrap();
         assert!(port > 0, "TTYD should start on a valid port");
     }
 }
