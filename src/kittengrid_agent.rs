@@ -193,18 +193,42 @@ impl KittengridAgent {
                 Some(health_check) => Some(health_check.path),
             };
 
-            if let Err(e) = self
-                .api
+            self.api
                 .as_ref()
                 .unwrap()
-                .peers_create_service(id, service.name(), service.port(), path)
-                .await
-            {
-                error!("Failed to register service: {}.", service.name());
-                return Err(KittengridAgentError::KittengridApiError(e));
-            };
+                .peers_create_service(id, &service.name(), service.port(), path)
+                .await?;
         }
         Ok(())
+    }
+
+    pub async fn register_service(
+        &self,
+        id: uuid::Uuid,
+        name: &str,
+        port: u16,
+        path: Option<String>,
+    ) -> Result<String, KittengridAgentError> {
+        if self.api.is_none() {
+            return Err(KittengridAgentError::NotRegisteredError);
+        }
+
+        match self
+            .api
+            .as_ref()
+            .unwrap()
+            .peers_create_service(id, name, port, path)
+            .await
+        {
+            Ok(response) => {
+                info!("Successfully registered service: {}.", name);
+                Ok(response)
+            }
+            Err(e) => {
+                error!("Failed to register service: {}.", name);
+                Err(KittengridAgentError::KittengridApiError(e))
+            }
+        }
     }
 
     /// Binds the agent to the network returining a listener.

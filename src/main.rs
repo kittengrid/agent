@@ -66,6 +66,31 @@ async fn main() {
             }
         }
 
+        info!("Starting debugging terminal.");
+        let id = uuid::Uuid::new_v4();
+        match lib::ttyd::Executable::default()
+            .start(&format!("/{}", id))
+            .await
+        {
+            Ok(port) => {
+                match agent
+                    .register_service(id, "ttyd", port, Some(format!("/{}/token", id).to_string()))
+                    .await
+                {
+                    Ok(public_url) => {
+                        info!("Terminal available at: {}/{}", public_url, id);
+                    }
+                    Err(e) => {
+                        error!("Failed to register service: {}. {}.", "ttyd", e)
+                    }
+                }
+            }
+            Err(e) => {
+                error!("Failed to start TTYD: {}.", e);
+                exit(1);
+            }
+        }
+
         info!("Services started, registering.");
         match agent.register_services().await {
             Ok(_) => {

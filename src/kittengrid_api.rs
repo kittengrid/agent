@@ -168,6 +168,10 @@ impl fmt::Display for ServiceStatus {
         }
     }
 }
+#[derive(Deserialize, Debug, Clone)]
+pub struct PeersCreateServiceResponse {
+    pub public_url: String,
+}
 
 impl KittengridApi {
     /// Updates a pull_request status using the agents Kittengrid internal api
@@ -247,13 +251,15 @@ impl KittengridApi {
         }
     }
 
+    /// Creates a service in the Kittengrid Api.
+    /// Returns the public_url
     pub async fn peers_create_service(
         &self,
         id: uuid::Uuid,
-        name: String,
+        name: &str,
         port: u16,
         path: Option<String>,
-    ) -> Result<(), KittengridApiError> {
+    ) -> Result<String, KittengridApiError> {
         let res = self
             .post("api/peers/service")
             .json(&serde_json::json!({
@@ -267,10 +273,14 @@ impl KittengridApi {
             .await;
         match res {
             Ok(res) => {
-                if res.status().is_success() {
-                    Ok(())
-                } else {
-                    Err(process_api_status_error_from_response(res).await)
+                if !res.status().is_success() {
+                    // If the response is successful, we can process the response
+                    return Err(process_api_status_error_from_response(res).await);
+                }
+                let data = res.json::<PeersCreateServiceResponse>().await;
+                match data {
+                    Ok(data) => Ok(data.public_url),
+                    Err(e) => Err(KittengridApiError::DeserializationError(e.to_string())),
                 }
             }
             Err(e) => Err(KittengridApiError::RequestError(e)),

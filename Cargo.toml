@@ -60,6 +60,7 @@ x25519-dalek = "1.2.0"
 jsonwebtoken = "9.3.1"
 async-trait = "0.1.88"
 openssl = { version = "0.10", features = ["vendored"] }
+regex = "1"
 
 [dependencies.uuid]
 version = "1.16.0"
@@ -73,3 +74,6 @@ features = [
 [dev-dependencies]
 libc = "0.2.174"
 tempfile = "3"
+
+[build-dependencies]
+reqwest = { version = "0.12", features = ["blocking"] }
