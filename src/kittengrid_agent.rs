@@ -188,16 +188,32 @@ impl KittengridAgent {
         let services = self.services();
         for (id, service) in services.descriptions().await {
             // Register with API
-            let path = match service.health_check() {
-                None => None,
-                Some(health_check) => Some(health_check.path),
-            };
+            let healthcheck_path = service.health_check().map(|hc| hc.path.clone());
 
-            self.api
+            let public_url = self
+                .api
                 .as_ref()
                 .unwrap()
-                .peers_create_service(id, &service.name(), service.port(), path, false)
+                .peers_create_service(
+                    id,
+                    &service.name(),
+                    service.port(),
+                    healthcheck_path,
+                    None,
+                    false,
+                )
                 .await?;
+
+            info!(
+                "Service {} registered with public URL: {}",
+                service.name(),
+                public_url
+            );
+
+            // Store the public URL in the service description
+            let service = self.services.fetch(id).await.unwrap();
+            let mut service = service.lock().await;
+            service.set_public_url(public_url);
         }
         Ok(())
     }
@@ -207,8 +223,9 @@ impl KittengridAgent {
         id: uuid::Uuid,
         name: &str,
         port: u16,
+        healthcheck_path: Option<String>,
         path: Option<String>,
-        wss: bool,
+        websocket: bool,
     ) -> Result<String, KittengridAgentError> {
         if self.api.is_none() {
             return Err(KittengridAgentError::NotRegisteredError);
@@ -218,7 +235,7 @@ impl KittengridAgent {
             .api
             .as_ref()
             .unwrap()
-            .peers_create_service(id, name, port, path, wss)
+            .peers_create_service(id, name, port, healthcheck_path, path, websocket)
             .await
         {
             Ok(response) => {

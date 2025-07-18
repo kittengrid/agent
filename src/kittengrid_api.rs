@@ -258,21 +258,26 @@ impl KittengridApi {
         id: uuid::Uuid,
         name: &str,
         port: u16,
+        healthcheck_path: Option<String>,
         path: Option<String>,
-        wss: bool,
+        websocket: bool,
     ) -> Result<String, KittengridApiError> {
-        let res = self
-            .post("api/peers/service")
-            .json(&serde_json::json!({
-                "id": id,
-                "port": port,
-                "path": path,
-                "name": name,
-                "wss": wss,
-                "publish": self.config.start_services,
-            }))
-            .send()
-            .await;
+        let mut data = serde_json::json!({
+            "id": id,
+            "port": port,
+            "name": name,
+            "websocket": websocket,
+            "publish": self.config.start_services,
+        });
+
+        if let Some(healthcheck_path) = healthcheck_path {
+            data["healthcheck_path"] = serde_json::Value::String(healthcheck_path);
+        }
+        if let Some(path) = path {
+            data["path"] = serde_json::Value::String(path);
+        }
+
+        let res = self.post("api/peers/service").json(&data).send().await;
         match res {
             Ok(res) => {
                 if !res.status().is_success() {

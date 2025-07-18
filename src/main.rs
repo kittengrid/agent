@@ -55,6 +55,20 @@ async fn main() {
             }
         }
 
+        info!("Registering services.");
+        match agent.register_services().await {
+            Ok(_) => {
+                info!("Successfully registered services.");
+            }
+            Err(e) => {
+                error!("Failed to register services: {}.", e);
+                exit(1);
+            }
+        }
+        agent
+            .set_status(lib::kittengrid_api::PullRequestStatus::Running)
+            .await;
+
         info!("All interfaces up. Spawning services.");
         match agent.spawn_services(config.show_services_output).await {
             Ok(_) => {
@@ -79,12 +93,13 @@ async fn main() {
                         "ttyd",
                         port,
                         Some(format!("/{}/token", id).to_string()),
+                        Some(format!("/{}", id).to_string()),
                         true,
                     )
                     .await
                 {
                     Ok(public_url) => {
-                        info!("Terminal available at: {}/{}", public_url, id);
+                        info!("Terminal available at: {}", public_url);
                     }
                     Err(e) => {
                         error!("Failed to register service: {}. {}.", "ttyd", e)
@@ -96,20 +111,6 @@ async fn main() {
                 exit(1);
             }
         }
-
-        info!("Services started, registering.");
-        match agent.register_services().await {
-            Ok(_) => {
-                info!("Successfully registered services.");
-            }
-            Err(e) => {
-                error!("Failed to register services: {}.", e);
-                exit(1);
-            }
-        }
-        agent
-            .set_status(lib::kittengrid_api::PullRequestStatus::Running)
-            .await;
 
         info!("All services spawned. Waiting for incomming requests.");
         agent.wait(listener).await;

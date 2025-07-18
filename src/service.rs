@@ -73,6 +73,7 @@ impl Default for ServiceStatus {
 pub struct Service {
     id: uuid::Uuid,
     description: ServiceDescription,
+    public_url: Option<String>,
     process_controller: Option<ProcessController>,
     stdout: PersistedBufReaderBroadcaster,
     stderr: PersistedBufReaderBroadcaster,
@@ -122,6 +123,14 @@ impl Service {
             ServiceStream::Stdout => self.stdout.subscribe().await,
             ServiceStream::Stderr => self.stderr.subscribe().await,
         }
+    }
+
+    pub fn set_public_url(&mut self, public_url: String) {
+        self.public_url = Some(public_url);
+    }
+
+    pub fn public_url(&self) -> Option<String> {
+        self.public_url.clone()
     }
 
     pub fn show_output(&mut self) {
@@ -206,6 +215,15 @@ impl Service {
         Ok(())
     }
 
+    pub fn injected_env(&self) -> HashMap<String, String> {
+        let mut env = HashMap::new();
+        if let Some(public_url) = self.public_url.as_ref() {
+            env.insert("KITTENGRID_PUBLIC_URL".to_string(), public_url.clone());
+        }
+
+        env
+    }
+
     /// Starts the service
     /// It will spawn the service and start broadcasting the stdout and stderr to the subscribers.
     pub async fn start(
@@ -231,6 +249,7 @@ impl Service {
 
         cmd.args(&self.description.args)
             .envs(&self.description.env)
+            .envs(self.injected_env())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
 
@@ -370,6 +389,20 @@ impl Services {
             .lock()
             .await
             .insert(service.id, Arc::new(Mutex::new(service)));
+    }
+
+    pub async fn update(&self, id: uuid::Uuid, service: Service) -> Result<(), std::io::Error> {
+        debug!("Updating service '{}'", service.description.name);
+        let mut services = self.services.lock().await;
+        if let Some(existing_service) = services.get_mut(&id) {
+            *existing_service.lock().await = service;
+            Ok(())
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("Service {} not found", id),
+            ))
+        }
     }
 
     /// Returns a service by its name.
