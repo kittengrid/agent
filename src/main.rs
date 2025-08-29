@@ -38,6 +38,23 @@ async fn main() {
         }
     }
 
+    if config.start_terminal || config.start_services {
+        agent
+            .set_status(lib::kittengrid_api::PullRequestStatus::Booting)
+            .await;
+
+        // Network config
+        match agent.configure_network().await {
+            Ok(_) => {
+                info!("Successfully configured network.");
+            }
+            Err(e) => {
+                error!("Failed to configure network: {}.", e);
+                exit(1);
+            }
+        }
+    }
+
     if config.start_terminal {
         info!("Starting debugging terminal.");
         let id = uuid::Uuid::new_v4();
@@ -73,22 +90,6 @@ async fn main() {
     }
 
     if config.start_services {
-        info!("Service start disabled. Exiting.");
-        agent
-            .set_status(lib::kittengrid_api::PullRequestStatus::Booting)
-            .await;
-
-        // Network config
-        match agent.configure_network().await {
-            Ok(_) => {
-                info!("Successfully configured network.");
-            }
-            Err(e) => {
-                error!("Failed to configure network: {}.", e);
-                exit(1);
-            }
-        }
-
         info!("Registering services.");
         match agent.register_services().await {
             Ok(_) => {

@@ -12,12 +12,17 @@ use std::{collections::HashMap, fs::File, io::BufReader};
 // TODO: FIX TESTS ARGUMENTS
 static CONFIG: Lazy<Config> = Lazy::new(|| {
     let mut args;
+
     if cfg!(test) {
         args = Args::parse_from(["kittengrid-agent", "--config", "kittengrid.test.yml"]);
     } else {
         args = Args::parse();
     }
 
+    process_args(&mut args)
+});
+
+fn process_args(args: &mut Args) -> Config {
     let config_path = if let Some(path) = &args.config_path {
         Some(path.clone())
     } else {
@@ -33,26 +38,28 @@ static CONFIG: Lazy<Config> = Lazy::new(|| {
         }
     };
 
-    let mut config = Config::from(&mut args.config);
-    if let Some(path) = &config_path {
+    let mut config = if let Some(path) = &config_path {
         if let Ok(f) = File::open(path) {
             // Parse config with serde
             match serde_yaml::from_reader::<_, <Config as ClapSerde>::Opt>(BufReader::new(f)) {
                 // merge config already parsed from clap
-                Ok(parsed_config) => config = Config::from(parsed_config).merge(&mut args.config),
+                Ok(parsed_config) => Config::from(parsed_config).merge(&mut args.config),
                 Err(err) => panic!("Error in configuration file:\n{}", err),
             }
-        };
+        } else {
+            warn!("Config file not found at path: {:?}, proceeding with defaults and command line arguments.", path);
+            Config::from(&mut args.config)
+        }
+    } else {
+        Config::from(&mut args.config)
     };
-
     config.set_defaults_if_missing();
     config
-});
+}
 
 pub fn get_config() -> &'static Config {
     &CONFIG
 }
-
 // Inspiration from https://stackoverflow.com/questions/55133351/is-there-a-way-to-get-clap-to-use-default-values-from-a-file
 
 #[derive(Parser)]
@@ -157,10 +164,42 @@ pub struct HealthCheck {
 #[cfg(test)]
 mod test {
     use super::*;
+    fn test_args() -> Args {
+        Args {
+            config_path: Some("kittengrid.test.yml".into()),
+            config: <Config as ClapSerde>::Opt::default(),
+        }
+    }
 
     #[test]
-    fn parse() {
-        let config = get_config();
+    fn default_values() {
+        let mut args = test_args();
+        let config = process_args(&mut args);
+        assert_eq!(config.log_level, "info");
         assert_eq!(config.bind_address, "0.0.0.0");
+    }
+
+    #[test]
+    fn overwrite_defaults() {
+        let mut args = test_args();
+        args.config.log_level = Some("debug".to_string());
+        let config = process_args(&mut args);
+        assert_eq!(config.log_level, "debug");
+        assert_eq!(config.bind_address, "0.0.0.0");
+    }
+
+    #[test]
+    fn overwrite_file_stuff() {
+        let mut args = test_args();
+        args.config.project_vcs_id = Some("123445".to_string());
+        let config = process_args(&mut args);
+        assert_eq!(config.project_vcs_id, "123445");
+    }
+
+    #[test]
+    fn overwrite_test_file_over_defaults() {
+        let mut args = test_args();
+        let config = process_args(&mut args);
+        assert_eq!(config.api_url, "http://web:3000");
     }
 }
