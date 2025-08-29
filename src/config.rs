@@ -119,11 +119,16 @@ pub struct Config {
     #[arg(long, env("KITTENGRID_WORKFLOW_RUN_ID"))]
     pub workflow_run_id: String,
 
+    /// Starts services defined in the configuration file [default: false]
     #[arg(long, env("KITTENGRID_START_SERVICES"))]
     pub start_services: bool,
 
     #[arg(long, env("KITTENGRID_LAST_COMMIT_SHA"))]
     pub last_commit_sha: String,
+
+    /// Whether to start a terminal service using ttyd [default: false]
+    #[arg(long, env("KITTENGRID_START_TERMINAL"))]
+    pub start_terminal: bool,
 
     #[clap(skip)]
     pub services: Vec<ServiceConfig>,

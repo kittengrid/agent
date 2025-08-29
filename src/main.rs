@@ -38,6 +38,40 @@ async fn main() {
         }
     }
 
+    if config.start_terminal {
+        info!("Starting debugging terminal.");
+        let id = uuid::Uuid::new_v4();
+        match lib::ttyd::Executable::default()
+            .start(&format!("/{}", id))
+            .await
+        {
+            Ok(port) => {
+                match agent
+                    .register_service(
+                        id,
+                        "ttyd",
+                        port,
+                        Some(format!("/{}/token", id).to_string()),
+                        Some(format!("/{}", id).to_string()),
+                        true,
+                    )
+                    .await
+                {
+                    Ok(public_url) => {
+                        info!("Terminal available at: {}", public_url);
+                    }
+                    Err(e) => {
+                        error!("Failed to register service: {}. {}.", "ttyd", e)
+                    }
+                }
+            }
+            Err(e) => {
+                error!("Failed to start TTYD: {}.", e);
+                exit(1);
+            }
+        }
+    }
+
     if config.start_services {
         info!("Service start disabled. Exiting.");
         agent
@@ -79,40 +113,10 @@ async fn main() {
                 exit(1);
             }
         }
-
-        info!("Starting debugging terminal.");
-        let id = uuid::Uuid::new_v4();
-        match lib::ttyd::Executable::default()
-            .start(&format!("/{}", id))
-            .await
-        {
-            Ok(port) => {
-                match agent
-                    .register_service(
-                        id,
-                        "ttyd",
-                        port,
-                        Some(format!("/{}/token", id).to_string()),
-                        Some(format!("/{}", id).to_string()),
-                        true,
-                    )
-                    .await
-                {
-                    Ok(public_url) => {
-                        info!("Terminal available at: {}", public_url);
-                    }
-                    Err(e) => {
-                        error!("Failed to register service: {}. {}.", "ttyd", e)
-                    }
-                }
-            }
-            Err(e) => {
-                error!("Failed to start TTYD: {}.", e);
-                exit(1);
-            }
-        }
-
         info!("All services spawned. Waiting for incomming requests.");
+    }
+
+    if config.start_services || config.start_terminal {
         agent.wait(listener).await;
     } else {
         info!("Service start disabled. Exiting.");
