@@ -12,6 +12,8 @@ pub fn sleep(secs: u64) {
 
 pub fn initialize_logger() {
     let config = get_config();
+    println!("Initializing logger with level: {:?}", config);
+
     let log_level = match log::LevelFilter::from_str(&config.log_level) {
         Ok(level) => level,
         Err(_) => {
