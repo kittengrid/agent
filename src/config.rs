@@ -2,6 +2,7 @@ use clap_serde_derive::{
     clap::{self, Parser},
     ClapSerde,
 };
+use log::warn;
 use serde::{Deserialize, Serialize};
 
 use once_cell::sync::Lazy;
@@ -18,29 +19,30 @@ static CONFIG: Lazy<Config> = Lazy::new(|| {
     }
 
     let config_path = if let Some(path) = &args.config_path {
-        path.clone()
+        Some(path.clone())
     } else {
         let default_paths = [
             std::path::PathBuf::from("kittengrid.yml"),
             std::path::PathBuf::from("kittengrid.yaml"),
         ];
         if let Some(path) = default_paths.iter().find(|p| p.exists()) {
-            path.clone()
+            Some(path.clone())
         } else {
-            panic!("No config file found, please provide a config file with --config, KITTENGRID_CONFIG environment variable or place it in the current directory as kittengrid.yml or kittengrid.yaml");
+            warn!("No config file found, please provide a config file with --config, KITTENGRID_CONFIG environment variable or place it in the current directory as kittengrid.yml or kittengrid.yaml");
+            None
         }
     };
 
-    let mut config = if let Ok(f) = File::open(config_path) {
-        // Parse config with serde
-        match serde_yaml::from_reader::<_, <Config as ClapSerde>::Opt>(BufReader::new(f)) {
-            // merge config already parsed from clap
-            Ok(config) => Config::from(config).merge(&mut args.config),
-            Err(err) => panic!("Error in configuration file:\n{}", err),
-        }
-    } else {
-        // If there is not config file return only config parsed from clap
-        Config::from(&mut args.config)
+    let mut config = Config::from(&mut args.config);
+    if let Some(path) = &config_path {
+        if let Ok(f) = File::open(path) {
+            // Parse config with serde
+            match serde_yaml::from_reader::<_, <Config as ClapSerde>::Opt>(BufReader::new(f)) {
+                // merge config already parsed from clap
+                Ok(parsed_config) => config = Config::from(parsed_config).merge(&mut args.config),
+                Err(err) => panic!("Error in configuration file:\n{}", err),
+            }
+        };
     };
 
     config.set_defaults_if_missing();
