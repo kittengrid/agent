@@ -8,28 +8,40 @@ set -e
 [ -z "${DEBUG}" ] || set -x
 
 SHA=$(git rev-parse HEAD || '')
-IMAGE=ghcr.io/kittengrid/kittengrid-agent
-TARGET=${TARGET:-build}
+TAG=${TAG:-${SHA}}
+IMAGE=ghcr.io/kittengrid/agent
+TARGET=${TARGET:-release}
 BRANCH=$(git symbolic-ref -q --short HEAD || echo $GITHUB_BASE_REF)
 
 cd "$(dirname "$0")/.."
 
 # parse the option parameters
 for i in "$@"; do
-  case $i in
+    case $i in
     no-cache)
-      NO_CACHE="--no-cache"
-      shift
-    ;;
-  esac
+        NO_CACHE="--no-cache"
+        shift
+        ;;
+    esac
 done
 
 if [ -n "${CI}" ]; then
     DOCKER_BUILDKIT=1 docker buildx create --driver docker-container --use
 fi
-DOCKER_BUILDKIT=1 docker buildx build --progress plain --target $TARGET $NO_CACHE -t $IMAGE:$SHA -f docker/Dockerfile \
-		  --cache-from type=registry,ref=${IMAGE}:ci-cache-${BRANCH} \
-		  --cache-from type=registry,ref=${IMAGE}:ci-cache-main \
-		  --cache-to type=registry,ref=${IMAGE}:ci-cache-${BRANCH},mode=max \
-		  --pull --push \
-		  .
+# Set platform - use provided PLATFORM or default to multi-arch for backward compatibility
+PLATFORM_FLAG=""
+if [ -n "${PLATFORM}" ]; then
+    PLATFORM_FLAG="--platform ${PLATFORM}"
+else
+    PLATFORM_FLAG="--platform linux/amd64,linux/arm64"
+fi
+
+DOCKER_BUILDKIT=1 docker buildx build --progress plain --target $TARGET $NO_CACHE \
+    $PLATFORM_FLAG \
+    -t $IMAGE:$TAG \
+    -f docker/Dockerfile \
+    --cache-from type=registry,ref=${IMAGE}:ci-cache-${BRANCH} \
+    --cache-from type=registry,ref=${IMAGE}:ci-cache-main \
+    --cache-to type=registry,ref=${IMAGE}:ci-cache-${BRANCH},mode=max \
+    --pull --push \
+    .

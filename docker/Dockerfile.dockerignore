@@ -7,5 +7,6 @@ Dockerfile
 !Cargo.toml
 !Cargo.lock
 !src
+!build.rs
 !compose_rust
 
