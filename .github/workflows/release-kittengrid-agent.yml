@@ -57,14 +57,12 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     strategy:
       matrix:
-        arch: [amd64, arm64]
+        arch: [x86_64, aarch64]
         include:
-          - arch: amd64
+          - arch: x86_64
             platform: linux/amd64
-            runner: ubuntu-latest
-          - arch: arm64
+          - arch: aarch64
             platform: linux/arm64
-            runner: ubuntu-latest
     permissions:
       contents: read
       packages: write
