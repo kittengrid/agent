@@ -42,13 +42,13 @@ COPY Cargo.toml Cargo.lock ./
 RUN sed -i 's#src/main.rs#src/dummy-main.rs#' Cargo.toml
 RUN sed -i 's#src/log_generator/main.rs#src/log_generator/dummy-main.rs#' Cargo.toml
 RUN sed -i 's#src/lib.rs#src/dummy-lib.rs#' Cargo.toml
-RUN /usr/local/cargo/bin/cargo build --release
+RUN TTYD="" /usr/local/cargo/bin/cargo build --release
 RUN rm -Rf ./src/* ./target/release/deps/kittengrid-agent-* ./target/release/deps/lib-* ./target/release/kittengrid-agent
 RUN sed -i 's#src/dummy-main.rs#src/main.rs#' Cargo.toml
 RUN sed -i 's#src/dummy-lib.rs#src/lib.rs#' Cargo.toml
 RUN sed -i 's#src/log_generator/dummy-main.rs#src/log_generator/main.rs#' Cargo.toml
 
-COPY ./src ./src
+COPY ./ ./
 RUN /usr/local/cargo/bin/cargo build --release
 
 FROM ubuntu:22.04 as release
