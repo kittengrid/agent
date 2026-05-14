@@ -31,7 +31,7 @@ rand = "0.10.1"
 
 headers = "0.4"
 axum = { version = "0.8.9", features = ["ws", "macros"] }
-axum-extra = { version = "0.12.6", features = ["typed-header"] }
+axum-extra = { version = "0.12.6", features = ["typed-header", "with-rejection"] }
 
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6.10", features = ["fs", "trace"] }

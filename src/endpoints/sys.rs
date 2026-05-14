@@ -2,6 +2,7 @@
 //
 // Description: Shuts down the server
 use axum::Json;
+use axum_extra::extract::WithRejection;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -10,8 +11,10 @@ pub struct ShutdownParams {
 }
 
 #[axum::debug_handler]
-pub async fn shutdown(params: Json<ShutdownParams>) -> &'static str {
-    log::info!("Shutting down: {}", params.message);
+pub async fn shutdown(
+    params: WithRejection<Json<ShutdownParams>, crate::api_error::ApiError>,
+) -> &'static str {
+    log::info!("Shutting down: {}", params.0.message);
     tokio::spawn(async move {
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
         std::process::exit(0);
