@@ -100,9 +100,9 @@ impl ProcessController {
     /// Arguments:
     /// - `child`: The child process to control.
     /// - `on_stop`: The callback to execute when the process stops.
-    ///              it will receive the status of the process.
+    ///   It will receive the status of the process.
     /// - `health_check`: The health check to execute to determine if the process is
-    ///                   still running.
+    ///   still running.
     pub async fn new(
         child: Child,
         on_stop: Arc<OnStopCallback>,

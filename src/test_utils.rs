@@ -27,8 +27,8 @@ use tempfile::tempfile;
 pub fn debug_output(output: &Output) {
     debug!(
         "stdout: {}\nstderr: {}",
-        String::from_utf8_lossy(&output.stdout).trim().to_string(),
-        String::from_utf8_lossy(&output.stderr).trim().to_string()
+        String::from_utf8_lossy(&output.stdout).trim(),
+        String::from_utf8_lossy(&output.stderr).trim()
     );
 }
 
