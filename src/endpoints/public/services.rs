@@ -68,13 +68,12 @@ pub async fn start(
     State(state): State<Arc<AxumState>>,
 ) -> Response {
     let services = state.services.clone();
-    let kittengrid_api = state.kittengrid_api.clone();
     let id = match find_service(path, &services).await {
         Ok(id) => id,
         Err(response) => return response,
     };
 
-    match services.start_service(id, kittengrid_api).await {
+    match services.start_service(id).await {
         Ok(_) => ok_response(),
         Err(e) => error_response(Box::new(e)),
     }
@@ -268,7 +267,11 @@ async fn handle_socket_combined(
         debug!("Received data from {id}:");
         let data = create_stream_output_json(&source, &data);
 
-        if socket.send(Message::Text(data.to_string().into())).await.is_err() {
+        if socket
+            .send(Message::Text(data.to_string().into()))
+            .await
+            .is_err()
+        {
             error!("Could not send data to {address}!");
             break;
         }

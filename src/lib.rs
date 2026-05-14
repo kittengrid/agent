@@ -28,7 +28,6 @@ extern crate log;
 
 pub struct AxumState {
     services: Arc<crate::service::Services>,
-    kittengrid_api: Arc<Option<kittengrid_api::KittengridApi>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
@@ -78,15 +77,8 @@ pub fn router(state: AxumState) -> Router {
         )
 }
 
-pub async fn launch(
-    listener: tokio::net::TcpListener,
-    services: Arc<crate::service::Services>,
-    kittengrid_api: Arc<Option<kittengrid_api::KittengridApi>>,
-) {
-    let state = AxumState {
-        services,
-        kittengrid_api,
-    };
+pub async fn launch(listener: tokio::net::TcpListener, services: Arc<crate::service::Services>) {
+    let state = AxumState { services };
     axum::serve(
         listener,
         router(state).into_make_service_with_connect_info::<SocketAddr>(),

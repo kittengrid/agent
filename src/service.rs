@@ -58,16 +58,13 @@ impl ServiceDescription {
 }
 
 #[derive(Debug, Serialize, Clone, Copy)]
+#[derive(Default)]
 pub enum ServiceStatus {
     Running,
+    #[default]
     Stopped,
 }
 
-impl Default for ServiceStatus {
-    fn default() -> Self {
-        ServiceStatus::Stopped
-    }
-}
 
 #[derive(Default, Debug)]
 pub struct Service {
@@ -78,6 +75,7 @@ pub struct Service {
     stdout: PersistedBufReaderBroadcaster,
     stderr: PersistedBufReaderBroadcaster,
     status: ServiceStatus,
+    kittengrid_api: Arc<Mutex<Option<KittengridApi>>>,
 }
 
 impl Serialize for Service {
@@ -118,6 +116,14 @@ impl std::fmt::Display for ServiceStream {
 }
 
 impl Service {
+    pub fn set_kittengrid_api_handle(&mut self, kittengrid_api: Arc<Mutex<Option<KittengridApi>>>) {
+        self.kittengrid_api = kittengrid_api;
+    }
+
+    async fn kittengrid_api(&self) -> Option<KittengridApi> {
+        self.kittengrid_api.lock().await.clone()
+    }
+
     pub async fn subscribe_to_stream(&self, stream: ServiceStream) -> BufferReceiver {
         match stream {
             ServiceStream::Stdout => self.stdout.subscribe().await,
@@ -199,7 +205,9 @@ impl Service {
                     self.description.name
                 );
                 match process_controller.stop().await {
-                    Ok(()) => {}
+                    Ok(()) => {
+                        self.status = ServiceStatus::Stopped;
+                    }
                     Err(e) => {
                         error!(
                             "Error stopping service '{}': {:?}",
@@ -209,6 +217,20 @@ impl Service {
                 };
             }
             None => {
+                self.status = ServiceStatus::Stopped;
+                if let Some(kittengrid_api) = self.kittengrid_api().await {
+                    if let Err(e) = kittengrid_api
+                        .services_update_status(
+                            self.id,
+                            Some(crate::kittengrid_api::ServiceStatus::Exited),
+                            None,
+                            None,
+                        )
+                        .await
+                    {
+                        error!("Error updating already stopped service status: {:?}", e);
+                    }
+                }
                 info!("Service {} was not running", self.description.name);
             }
         }
@@ -226,12 +248,10 @@ impl Service {
 
     /// Starts the service
     /// It will spawn the service and start broadcasting the stdout and stderr to the subscribers.
-    pub async fn start(
-        &mut self,
-        kittengrid_api: Arc<Option<KittengridApi>>,
-    ) -> std::io::Result<()> {
+    pub async fn start(&mut self) -> std::io::Result<()> {
         debug!("Starting service '{}'", self.description.name);
-        if let Some(kittengrid_api) = &*kittengrid_api {
+        let kittengrid_api = self.kittengrid_api().await;
+        if let Some(kittengrid_api) = &kittengrid_api {
             if let Err(e) = kittengrid_api
                 .services_update_status(
                     self.id,
@@ -253,7 +273,29 @@ impl Service {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
 
-        let mut child = cmd.spawn()?;
+        let mut child = match cmd.spawn() {
+            Ok(child) => child,
+            Err(e) => {
+                self.status = ServiceStatus::Stopped;
+                if let Some(kittengrid_api) = &kittengrid_api {
+                    if let Err(update_err) = kittengrid_api
+                        .services_update_status(
+                            self.id,
+                            Some(crate::kittengrid_api::ServiceStatus::Exited),
+                            None,
+                            None,
+                        )
+                        .await
+                    {
+                        error!(
+                            "Error updating service status after spawn failure: {:?}",
+                            update_err
+                        );
+                    }
+                }
+                return Err(e);
+            }
+        };
         let stdout = BufReader::new(child.stdout.take().expect("stdout is None"));
         self.stdout.watch(stdout).await;
 
@@ -261,7 +303,7 @@ impl Service {
         self.stderr.watch(stderr).await;
         self.status = ServiceStatus::Running;
 
-        if let Some(kittengrid_api) = &*kittengrid_api {
+        if let Some(kittengrid_api) = &kittengrid_api {
             if let Err(e) = kittengrid_api
                 .services_update_status(
                     self.id,
@@ -278,7 +320,7 @@ impl Service {
         let on_stop_callback = Arc::new(Self::create_on_exit_callback(
             self.description.name.clone(),
             self.id,
-            Arc::clone(&kittengrid_api),
+            Arc::clone(&self.kittengrid_api),
         ));
 
         let health_check = self.health_check().map(|health_check| {
@@ -288,7 +330,7 @@ impl Service {
         let on_health_status_change_callback = Arc::new(Self::create_health_status_callback(
             self.description.name.clone(),
             self.id,
-            Arc::clone(&kittengrid_api),
+            Arc::clone(&self.kittengrid_api),
         ));
 
         let process_controller = ProcessController::new(
@@ -308,7 +350,7 @@ impl Service {
     fn create_on_exit_callback(
         service_name: String,
         service_id: uuid::Uuid,
-        kittengrid_api: Arc<Option<KittengridApi>>,
+        kittengrid_api: Arc<Mutex<Option<KittengridApi>>>,
     ) -> impl Fn(ExitStatus) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync {
         move |status: ExitStatus| {
             let description = service_name.clone();
@@ -318,16 +360,16 @@ impl Service {
             let exit_status = status.code();
 
             Box::pin(async move {
-                if let Some(kittengrid_api) = &*kittengrid_api {
+                if let Some(kittengrid_api) = kittengrid_api.lock().await.clone() {
                     match kittengrid_api
                         .services_update_status(id, Some(service_status), None, exit_status)
                         .await
                     {
                         Ok(()) => {
-                            info!("Service '{}' status updated to Stopped", description)
+                            info!("Service '{}' status updated to Exited", description)
                         }
                         Err(e) => error!(
-                            "Error updating service '{}' status to Stopped: {:?}",
+                            "Error updating service '{}' status to Exited: {:?}",
                             description, e
                         ),
                     };
@@ -342,7 +384,7 @@ impl Service {
     fn create_health_status_callback(
         service_name: String,
         service_id: uuid::Uuid,
-        kittengrid_api: Arc<Option<KittengridApi>>,
+        kittengrid_api: Arc<Mutex<Option<KittengridApi>>>,
     ) -> impl Fn(crate::HealthStatus) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync
     {
         move |status: crate::HealthStatus| {
@@ -351,17 +393,20 @@ impl Service {
             let kittengrid_api = Arc::clone(&kittengrid_api);
 
             Box::pin(async move {
-                if let Some(kittengrid_api) = &*kittengrid_api {
+                if let Some(kittengrid_api) = kittengrid_api.lock().await.clone() {
                     match kittengrid_api
                         .services_update_status(id, None, Some(status), None)
                         .await
                     {
                         Ok(()) => {
-                            info!("Service '{}' status updated to Stopped", description)
+                            info!(
+                                "Service '{}' health status updated to {}",
+                                description, status
+                            )
                         }
                         Err(e) => error!(
-                            "Error updating service '{}' status to Stopped: {:?}",
-                            description, e
+                            "Error updating service '{}' health status to {}: {:?}",
+                            description, status, e
                         ),
                     };
                 };
@@ -373,18 +418,25 @@ impl Service {
 #[derive(Default, Debug)]
 pub struct Services {
     services: Mutex<HashMap<uuid::Uuid, Arc<Mutex<Service>>>>,
+    kittengrid_api: Arc<Mutex<Option<KittengridApi>>>,
 }
 
 impl Services {
     pub fn new() -> Self {
         Self {
             services: Mutex::new(HashMap::new()),
+            kittengrid_api: Arc::new(Mutex::new(None)),
         }
     }
 
+    pub async fn set_kittengrid_api(&self, kittengrid_api: Option<KittengridApi>) {
+        *self.kittengrid_api.lock().await = kittengrid_api;
+    }
+
     /// Adds a service to the services list.
-    pub async fn insert(&self, service: Service) {
+    pub async fn insert(&self, mut service: Service) {
         debug!("Adding service '{}' to services.", service.description.name);
+        service.set_kittengrid_api_handle(Arc::clone(&self.kittengrid_api));
         self.services
             .lock()
             .await
@@ -468,11 +520,7 @@ impl Services {
     }
 
     /// Starts a service by its id.
-    pub async fn start_service(
-        &self,
-        id: uuid::Uuid,
-        kittengrid_api: Arc<Option<KittengridApi>>,
-    ) -> std::io::Result<()> {
+    pub async fn start_service(&self, id: uuid::Uuid) -> std::io::Result<()> {
         let service = self.services.lock().await.get(&id).cloned();
 
         if service.is_none() {
@@ -484,7 +532,7 @@ impl Services {
 
         let service = service.unwrap();
         let mut service = service.lock().await;
-        service.start(kittengrid_api).await
+        service.start().await
     }
 
     /// Returns a stream reader for a service if found.
@@ -590,7 +638,7 @@ mod test {
             ..Default::default()
         };
         let mut service = Service::from(config);
-        let result = service.start(Arc::new(None)).await;
+        let result = service.start().await;
 
         assert!(result.is_ok());
         let mut receiver = service.subscribe_to_stream(ServiceStream::Stdout).await;
@@ -612,7 +660,7 @@ mod test {
     async fn spawn_log() {
         initialize_tests();
         let mut service = crate::test_utils::log_generator_service();
-        let result = service.start(Arc::new(None)).await;
+        let result = service.start().await;
 
         assert!(result.is_ok());
         let mut receiver = service.subscribe_to_stream(ServiceStream::Stdout).await;
@@ -630,7 +678,7 @@ mod test {
     async fn lifecycle() {
         initialize_tests();
         let mut service = crate::test_utils::log_generator_service();
-        let result = service.start(Arc::new(None)).await;
+        let result = service.start().await;
         assert!(result.is_ok());
         let mut receiver = service.subscribe_to_stream(ServiceStream::Stdout).await;
         let data = receiver.recv().await;
@@ -638,7 +686,7 @@ mod test {
         let data = receiver.recv().await;
         assert!(data.is_some());
         service.stop().await.unwrap();
-        let result = service.start(Arc::new(None)).await;
+        let result = service.start().await;
         assert!(result.is_ok());
         let data = receiver.recv().await;
         assert!(data.is_some());
@@ -660,7 +708,7 @@ mod test {
 
         std::env::set_var("TEST_ENV", "test_value");
 
-        let result = service.start(Arc::new(None)).await;
+        let result = service.start().await;
         assert!(result.is_ok());
 
         let mut receiver = service.subscribe_to_stream(ServiceStream::Stdout).await;
