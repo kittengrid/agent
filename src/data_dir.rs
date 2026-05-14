@@ -1,7 +1,7 @@
 use crate::config::get_config;
 use log::warn;
 use once_cell::sync::Lazy;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::{fs, io};
 use tempfile::tempdir;
 use thiserror::Error;
@@ -34,7 +34,7 @@ impl DataDir {
     /// # Arguments
     ///
     /// * `path` - A string slice that holds the path of the directory.
-    ///            It should be writable by user running the agent.
+    ///   It should be writable by user running the agent.
     ///
     /// # Examples
     ///
@@ -123,7 +123,7 @@ impl DataDir {
     }
 }
 
-fn build_directory_structure(path: &PathBuf) -> Result<(), DataDirInitError> {
+fn build_directory_structure(path: &Path) -> Result<(), DataDirInitError> {
     let paths = vec!["bin", "repos", "work"];
     let mut temp_builder = fs::DirBuilder::new();
     let builder = temp_builder.recursive(true);

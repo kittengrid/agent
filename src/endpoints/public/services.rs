@@ -375,19 +375,17 @@ where
 {
     type Rejection = AuthError;
 
-    fn from_request_parts(
+    async fn from_request_parts(
         parts: &mut Parts,
         _state: &S,
-    ) -> impl std::future::Future<Output = Result<Self, Self::Rejection>> + Send {
-        async move {
-            // Extract the token from the authorization header
-            let TypedHeader(Authorization(bearer)) = parts
-                .extract::<TypedHeader<Authorization<Bearer>>>()
-                .await
-                .map_err(|_| AuthError::InvalidToken)?;
+    ) -> Result<Self, Self::Rejection> {
+        // Extract the token from the authorization header
+        let TypedHeader(Authorization(bearer)) = parts
+            .extract::<TypedHeader<Authorization<Bearer>>>()
+            .await
+            .map_err(|_| AuthError::InvalidToken)?;
 
-            validate_token(bearer.token())
-        }
+        validate_token(bearer.token())
     }
 }
 
