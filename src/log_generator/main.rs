@@ -1,5 +1,5 @@
 use clap::Parser;
-use rand::{distributions::Alphanumeric, Rng}; // 0.8
+use rand::{distr::Alphanumeric, RngExt};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -18,7 +18,7 @@ pub struct Args {
 }
 
 fn generate_line(length: usize) -> String {
-    rand::thread_rng()
+    rand::rng()
         .sample_iter(&Alphanumeric)
         .take(length)
         .map(char::from)
