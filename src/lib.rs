@@ -52,23 +52,23 @@ pub fn router(state: AxumState) -> Router {
         .route("/sys/shutdown", post(endpoints::sys::shutdown))
         .route("/public/services", get(endpoints::public::services::index))
         .route(
-            "/public/services/:id/stdout",
+            "/public/services/{id}/stdout",
             get(endpoints::public::services::stdout),
         )
         .route(
-            "/public/services/:id/stderr",
+            "/public/services/{id}/stderr",
             get(endpoints::public::services::stderr),
         )
         .route(
-            "/public/services/:id/combined_output",
+            "/public/services/{id}/combined_output",
             get(endpoints::public::services::combined_output),
         )
         .route(
-            "/public/services/:id/stop",
+            "/public/services/{id}/stop",
             post(endpoints::public::services::stop),
         )
         .route(
-            "/public/services/:id/start",
+            "/public/services/{id}/start",
             post(endpoints::public::services::start),
         )
         .with_state(Arc::new(state))

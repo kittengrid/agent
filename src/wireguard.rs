@@ -4,12 +4,12 @@ use std::net::ToSocketAddrs;
 use std::{net::SocketAddr, str::FromStr};
 
 use defguard_wireguard_rs::{
-    host::Peer as WgPeer, key::Key, net::IpAddrMask, InterfaceConfiguration, Kernel, WGApi,
+    key::Key, net::IpAddrMask, peer::Peer as WgPeer, InterfaceConfiguration, Kernel, WGApi,
     WireguardInterfaceApi,
 };
 use x25519_dalek::PublicKey;
 
-const PORT_BASE: u32 = 51820;
+const PORT_BASE: u16 = 51820;
 const MTU: u32 = 1384;
 
 pub struct WireGuard {
@@ -26,7 +26,7 @@ impl WireGuard {
     pub async fn new(index: usize) -> Result<WireGuard, Box<dyn std::error::Error>> {
         let interface_name = format!("wg{}", index);
 
-        let wgapi = WGApi::<Kernel>::new(interface_name.clone())?;
+        let mut wgapi = WGApi::<Kernel>::new(interface_name.clone())?;
 
         // create interface
         wgapi.create_interface()?;
@@ -76,9 +76,10 @@ impl WireGuard {
             name: self.interface_name.clone(),
             prvkey: peer_config.private_key(),
             addresses: vec![peer_config.address().to_string().parse()?],
-            port: PORT_BASE + self.index as u32,
+            port: PORT_BASE + self.index as u16,
             peers: vec![peer],
             mtu: MTU.into(),
+            fwmark: None,
         };
 
         self.wgapi.configure_interface(&interface_config)?;

@@ -2,7 +2,6 @@ use crate::service::{ServiceStream, Services};
 use crate::AxumState;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use async_trait::async_trait;
 use axum::RequestPartsExt;
 
 use axum::{
@@ -24,7 +23,7 @@ use log::{debug, error, info};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::{borrow::Cow, sync::Arc};
+use std::sync::Arc;
 
 use std::net::SocketAddr;
 
@@ -208,7 +207,7 @@ async fn handle_socket(
     while let Some(data) = stream_channel_receiver.recv().await {
         info!("Received data from {id}:");
 
-        if socket.send(Message::Binary(data.to_vec())).await.is_err() {
+        if socket.send(Message::Binary(data)).await.is_err() {
             error!("Could not send data to {address}!");
             break;
         }
@@ -225,7 +224,7 @@ async fn handle_socket(
     if let Err(e) = socket
         .send(Message::Close(Some(CloseFrame {
             code: axum::extract::ws::close_code::NORMAL,
-            reason: Cow::from("Closed by server"),
+            reason: "Closed by server".into(),
         })))
         .await
     {
@@ -269,7 +268,7 @@ async fn handle_socket_combined(
         debug!("Received data from {id}:");
         let data = create_stream_output_json(&source, &data);
 
-        if socket.send(Message::Text(data.to_string())).await.is_err() {
+        if socket.send(Message::Text(data.to_string().into())).await.is_err() {
             error!("Could not send data to {address}!");
             break;
         }
@@ -293,7 +292,7 @@ async fn handle_socket_combined(
     if let Err(e) = socket
         .send(Message::Close(Some(CloseFrame {
             code: axum::extract::ws::close_code::NORMAL,
-            reason: Cow::from("Closed by server"),
+            reason: "Closed by server".into(),
         })))
         .await
     {
@@ -370,21 +369,25 @@ pub struct Claims {
     pub exp: u64,
 }
 
-#[async_trait]
 impl<S> FromRequestParts<S> for Claims
 where
-    S: Sized,
+    S: Send + Sync,
 {
     type Rejection = AuthError;
 
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        // Extract the token from the authorization header
-        let TypedHeader(Authorization(bearer)) = parts
-            .extract::<TypedHeader<Authorization<Bearer>>>()
-            .await
-            .map_err(|_| AuthError::InvalidToken)?;
+    fn from_request_parts(
+        parts: &mut Parts,
+        _state: &S,
+    ) -> impl std::future::Future<Output = Result<Self, Self::Rejection>> + Send {
+        async move {
+            // Extract the token from the authorization header
+            let TypedHeader(Authorization(bearer)) = parts
+                .extract::<TypedHeader<Authorization<Bearer>>>()
+                .await
+                .map_err(|_| AuthError::InvalidToken)?;
 
-        validate_token(bearer.token())
+            validate_token(bearer.token())
+        }
     }
 }
 

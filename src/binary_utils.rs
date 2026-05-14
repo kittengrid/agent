@@ -7,7 +7,7 @@ pub fn install_binary(binary_bytes: &[u8]) -> String {
     let temp_dir = env::temp_dir();
 
     // random file name
-    let bin_path = temp_dir.join(format!("agent_bin_{}", rand::random::<u32>()));
+    let bin_path = temp_dir.join(format!("agent_bin_{}", uuid::Uuid::new_v4()));
 
     // Write bytes to file
     fs::write(&bin_path, binary_bytes).expect("Failed to write binary file");
