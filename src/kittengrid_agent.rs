@@ -59,7 +59,8 @@ impl KittengridAgent {
     pub async fn register(&mut self) -> Result<(), crate::kittengrid_api::KittengridApiError> {
         let api = crate::kittengrid_api::from_registration(&self.config).await;
         if let Ok(api) = api {
-            self.api = Some(api);
+            self.api = Some(api.clone());
+            self.services.set_kittengrid_api(Some(api)).await;
             Ok(())
         } else {
             Err(api.err().unwrap())
@@ -150,7 +151,7 @@ impl KittengridAgent {
                 service.show_output();
             }
 
-            if let Err(e) = service.start(Arc::new(self.api.clone())).await {
+            if let Err(e) = service.start().await {
                 error!("Failed to spawn service: {}.", name);
                 return Err(KittengridAgentError::ServiceSpawnError(e));
             }
@@ -265,11 +266,6 @@ impl KittengridAgent {
     }
 
     pub async fn wait(&self, listener: tokio::net::TcpListener) {
-        crate::launch(
-            listener,
-            Arc::clone(&self.services),
-            Arc::new(self.api.clone()),
-        )
-        .await;
+        crate::launch(listener, Arc::clone(&self.services)).await;
     }
 }

@@ -67,7 +67,7 @@ impl DataDir {
     /// ```
     ///
     pub fn init(&mut self) -> Result<(), DataDirInitError> {
-        return match build_directory_structure(&self.path) {
+        match build_directory_structure(&self.path) {
             Err(DataDirInitError::DirectoryNotWritable) => {
                 warn!(
                     "Cannot write to destination dir ({}), using a temporary directory instead",
@@ -87,7 +87,7 @@ impl DataDir {
                 self.initialized = true;
                 Ok(())
             }
-        };
+        }
     }
 
     /// Returns the path of the state dir.
