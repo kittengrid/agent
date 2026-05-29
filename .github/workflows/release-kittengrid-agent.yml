@@ -7,19 +7,20 @@ on:
 jobs:
   build:
     name: Build Binaries
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
-        arch: [x86_64, aarch64]
         include:
           - arch: x86_64
             target: x86_64-unknown-linux-musl
             bin_name: kittengrid-agent
             artifact_name: kittengrid-agent-linux-amd64
+            runner: ubuntu-latest
           - arch: aarch64
             target: aarch64-unknown-linux-musl
             bin_name: kittengrid-agent
             artifact_name: kittengrid-agent-linux-arm64
+            runner: ubuntu-24.04-arm
 
     steps:
       - uses: actions/checkout@v4
@@ -31,11 +32,16 @@ jobs:
           target: ${{ matrix.target }}
           override: true
 
-      - name: Install cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
+      - name: Install native musl toolchain
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
 
       - name: Build binary
-        run: cross build --profile release-with-debug --target ${{ matrix.target }}
+        run: cargo build --profile release-with-debug --target ${{ matrix.target }}
+        env:
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          CC_aarch64_unknown_linux_musl: musl-gcc
 
       - name: Package binary
         run: |
