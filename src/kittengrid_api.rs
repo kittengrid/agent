@@ -43,7 +43,7 @@ pub async fn from_registration(config: &Config) -> Result<KittengridApi, Kitteng
         .json(&serde_json::json!({
             "vcs_provider": config.vcs_provider,
             "pull_request_vcs_id": config.pull_request_vcs_id,
-            "project_vcs_id": config.project_vcs_id,
+            "project_vcs_path": config.project_vcs_path,
             "workflow_run_id": config.workflow_run_id,
         }))
         .header("Authorization", format!("Bearer {}", config.api_key))

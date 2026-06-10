@@ -122,8 +122,8 @@ pub struct Config {
     #[arg(long, env("KITTENGRID_PULL_REQUEST_VCS_ID"))]
     pub pull_request_vcs_id: String,
 
-    #[arg(long, env("KITTENGRID_PROJECT_VCS_ID"))]
-    pub project_vcs_id: String,
+    #[arg(long, env("KITTENGRID_PROJECT_VCS_PATH"))]
+    pub project_vcs_path: String,
 
     #[arg(long, env("KITTENGRID_WORKFLOW_RUN_ID"))]
     pub workflow_run_id: String,
@@ -191,9 +191,9 @@ mod test {
     #[test]
     fn overwrite_file_stuff() {
         let mut args = test_args();
-        args.config.project_vcs_id = Some("123445".to_string());
+        args.config.project_vcs_path = Some("123445".to_string());
         let config = process_args(&mut args);
-        assert_eq!(config.project_vcs_id, "123445");
+        assert_eq!(config.project_vcs_path, "123445");
     }
 
     #[test]
