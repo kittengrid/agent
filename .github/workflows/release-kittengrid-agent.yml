@@ -1,9 +1,16 @@
 name: Build and Release Kittengrid Agent
 
 on:
- push:
-   tags:
-     - 'v*'
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/main' }}
+
 jobs:
   build:
     name: Build Binaries
@@ -123,6 +130,33 @@ jobs:
             -t ghcr.io/kittengrid/agent:${{ steps.get_version.outputs.VERSION }} \
             ghcr.io/kittengrid/agent:${{ steps.get_version.outputs.VERSION }}-amd64 \
             ghcr.io/kittengrid/agent:${{ steps.get_version.outputs.VERSION }}-arm64
+
+  canary-release:
+    name: Publish Canary
+    needs: [build]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Update canary release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: canary
+          name: canary (${{ github.sha }})
+          prerelease: true
+          files: |
+            artifacts/kittengrid-agent-linux-amd64/*.tar.gz
+            artifacts/kittengrid-agent-linux-arm64/*.tar.gz
+          body: |
+            Canary build of `main` at ${{ github.sha }}.
+
+            Rolling prerelease — updated on every push to `main`. Not a stable release.
 
   create-release:
     name: Create Release
