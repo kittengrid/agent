@@ -57,14 +57,12 @@ impl ServiceDescription {
     }
 }
 
-#[derive(Debug, Serialize, Clone, Copy)]
-#[derive(Default)]
+#[derive(Debug, Serialize, Clone, Copy, Default)]
 pub enum ServiceStatus {
     Running,
     #[default]
     Stopped,
 }
-
 
 #[derive(Default, Debug)]
 pub struct Service {

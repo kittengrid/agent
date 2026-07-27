@@ -54,8 +54,8 @@ impl KittengridAgent {
         }
     }
 
-    /// Registers the agent with the kittengrid API and obtains a token to be
-    /// used in subsequent requests.
+    /// Registers the agent with the Kittengrid API. Subsequent requests use
+    /// the configured organization API key.
     pub async fn register(&mut self) -> Result<(), crate::kittengrid_api::KittengridApiError> {
         let api = crate::kittengrid_api::from_registration(&self.config).await;
         if let Ok(api) = api {

@@ -47,7 +47,7 @@ tempfile = "3.27"
 url = "2.5"
 sha2 = "0.11"
 arc-swap = "1.9"
-reqwest = { version = "0.13", default-features = false, features = ["json", "blocking", "rustls"] } 
+reqwest = { version = "0.13", default-features = false, features = ["json", "blocking", "query", "rustls"] }
 tracing = "0.1.44"
 tracing-subscriber = "0.3.23"
 tracing-appender = "0.2.5"
