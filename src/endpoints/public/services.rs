@@ -2,26 +2,17 @@ use crate::service::{ServiceStream, Services};
 use crate::AxumState;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use axum::RequestPartsExt;
-
 use axum::{
     body::Body,
     extract::{
         rejection::PathRejection,
         ws::{Message, WebSocket, WebSocketUpgrade},
-        FromRequestParts, Path, Query, State,
+        Path, State,
     },
-    http::{request::Parts, StatusCode},
+    http::StatusCode,
     response::{IntoResponse, Json, Response},
 };
-use axum_extra::{
-    headers::{authorization::Bearer, Authorization},
-    TypedHeader,
-};
-use jsonwebtoken::{decode, DecodingKey, Validation};
 use log::{debug, error, info};
-use once_cell::sync::Lazy;
-use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
 
@@ -54,7 +45,7 @@ use axum::extract::ws::CloseFrame;
 ///       "status" : "Stopped"
 ///    }
 /// ]
-pub async fn index(_claims: Claims, State(state): State<Arc<AxumState>>) -> impl IntoResponse {
+pub async fn index(State(state): State<Arc<AxumState>>) -> impl IntoResponse {
     let services = state.services.clone();
     Json(services.to_json().await["services"].clone())
 }
@@ -63,7 +54,6 @@ pub async fn index(_claims: Claims, State(state): State<Arc<AxumState>>) -> impl
 ///
 /// Description: Starts the service by its id (404  if not found)
 pub async fn start(
-    _claims: Claims,
     path: Result<Path<uuid::Uuid>, PathRejection>,
     State(state): State<Arc<AxumState>>,
 ) -> Response {
@@ -84,7 +74,6 @@ pub async fn start(
 /// Description: Stops the service by its id (404  if not found)
 #[axum::debug_handler]
 pub async fn stop(
-    _claims: Claims,
     path: Result<Path<uuid::Uuid>, PathRejection>,
     State(state): State<Arc<AxumState>>,
 ) -> Response {
@@ -105,18 +94,12 @@ pub async fn stop(
 ///
 /// Description: Connects to the stdout of the service by its id (404  if not found)
 pub async fn stdout(
-    Query(params): Query<OutputStreamParams>,
     path: Result<Path<uuid::Uuid>, PathRejection>,
     State(state): State<Arc<AxumState>>,
     ws: WebSocketUpgrade,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
     let services = state.services.clone();
-
-    match validate_token(&params.token) {
-        Ok(_) => (),
-        Err(response) => return response.into_response(),
-    }
 
     let id = match find_service(path, &services).await {
         Ok(id) => id,
@@ -137,18 +120,12 @@ pub async fn stdout(
 ///     "timestamp": "2023-01-01T00:00:00Z"
 /// }
 pub async fn combined_output(
-    Query(params): Query<OutputStreamParams>,
     path: Result<Path<uuid::Uuid>, PathRejection>,
     State(state): State<Arc<AxumState>>,
     ws: WebSocketUpgrade,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
     let services = state.services.clone();
-
-    match validate_token(&params.token) {
-        Ok(_) => (),
-        Err(response) => return response.into_response(),
-    }
 
     let id = match find_service(path, &services).await {
         Ok(id) => id,
@@ -158,26 +135,17 @@ pub async fn combined_output(
     ws.on_upgrade(move |socket| handle_socket_combined(socket, addr, id, services))
         .into_response()
 }
-#[derive(Debug, Deserialize)]
-pub struct OutputStreamParams {
-    pub token: String,
-}
 
 /// GET /public/services/:id/stderr
 ///
 /// Description: Connects to the stderr of the service by its id (404  if not found)
 pub async fn stderr(
-    Query(params): Query<OutputStreamParams>,
     path: Result<Path<uuid::Uuid>, PathRejection>,
     State(state): State<Arc<AxumState>>,
     ws: WebSocketUpgrade,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
     let services = state.services.clone();
-    match validate_token(&params.token) {
-        Ok(_) => (),
-        Err(response) => return response.into_response(),
-    }
     let id = match find_service(path, &services).await {
         Ok(id) => id,
         Err(response) => return response,
@@ -358,74 +326,6 @@ fn create_stream_output_json(
     })
 }
 
-// For auth using jwt
-
-static KEY: Lazy<DecodingKey> = Lazy::new(|| {
-    let secret = crate::config::get_config().clone().api_key;
-    DecodingKey::from_secret(secret.as_bytes())
-});
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Claims {
-    pub bearer_id: String,
-    pub bearer_type: String,
-    pub exp: u64,
-}
-
-impl<S> FromRequestParts<S> for Claims
-where
-    S: Send + Sync,
-{
-    type Rejection = AuthError;
-
-    async fn from_request_parts(
-        parts: &mut Parts,
-        _state: &S,
-    ) -> Result<Self, Self::Rejection> {
-        // Extract the token from the authorization header
-        let TypedHeader(Authorization(bearer)) = parts
-            .extract::<TypedHeader<Authorization<Bearer>>>()
-            .await
-            .map_err(|_| AuthError::InvalidToken)?;
-
-        validate_token(bearer.token())
-    }
-}
-
-pub fn validate_token(token: &str) -> Result<Claims, AuthError> {
-    let token_data = decode::<Claims>(token, &KEY, &Validation::default())
-        .map_err(|_| AuthError::InvalidToken)?;
-
-    let current_time_in_seconds = match SystemTime::now().duration_since(UNIX_EPOCH) {
-        Ok(n) => n.as_secs(),
-        Err(_) => return Err(AuthError::InvalidToken),
-    };
-
-    if current_time_in_seconds > token_data.claims.exp {
-        return Err(AuthError::ExpiredToken);
-    }
-
-    Ok(token_data.claims)
-}
-
-pub enum AuthError {
-    ExpiredToken,
-    InvalidToken,
-}
-
-impl IntoResponse for AuthError {
-    fn into_response(self) -> Response {
-        let (status, error_message) = match self {
-            AuthError::ExpiredToken => (StatusCode::FORBIDDEN, "Token expired"),
-            AuthError::InvalidToken => (StatusCode::FORBIDDEN, "Invalid token"),
-        };
-        let body = Json(json!({
-            "error": error_message,
-        }));
-        (status, body).into_response()
-    }
-}
-
 #[cfg(test)]
 mod test {
     use crate::test_utils::*;
@@ -437,48 +337,12 @@ mod test {
     use tokio_tungstenite::connect_async;
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
-    async fn unauthenticated_request() {
+    async fn public_endpoint_request() {
         initialize_tests();
         let server_test = ServerTest::new(false).await;
         let response = server_test
             .client
             .get(server_test.url_for("/public/services"))
-            .send()
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
-    async fn expired_token_request() {
-        initialize_tests();
-        let server_test = ServerTest::new(false).await;
-        let response = server_test
-            .client
-            .get(server_test.url_for("/public/services"))
-            .header(
-                "Authorization",
-                format!("Bearer {}", server_test.invalid_token()),
-            )
-            .send()
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
-    async fn valid_token_request() {
-        initialize_tests();
-        let server_test = ServerTest::new(false).await;
-        let response = server_test
-            .client
-            .get(server_test.url_for("/public/services"))
-            .header(
-                "Authorization",
-                format!("Bearer {}", server_test.valid_token()),
-            )
             .send()
             .await
             .unwrap();
@@ -499,31 +363,14 @@ mod test {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
-    async fn stdout_invalid_token() {
-        initialize_tests();
-        let server_test = ServerTest::new(true).await;
-        let service_id = first_service_id(&server_test.services()).await;
-        let ws_stream = connect_async(server_test.url_for_with_protocol(
-            "ws",
-            &format!("/public/services/{service_id}/stdout?token=1234"),
-        ))
-        .await;
-        assert!(ws_stream.is_err());
-        server_test.services().stop().await.unwrap();
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     async fn stdout() {
         initialize_tests();
         let server_test = ServerTest::new(true).await;
         let service_id = first_service_id(&server_test.services()).await;
-        let ws_stream = match connect_async(server_test.url_for_with_protocol(
-            "ws",
-            &format!(
-                "/public/services/{service_id}/stdout?token={}",
-                server_test.valid_token()
-            ),
-        ))
+        let ws_stream = match connect_async(
+            server_test
+                .url_for_with_protocol("ws", &format!("/public/services/{service_id}/stdout")),
+        )
         .await
         {
             Ok((stream, _)) => stream,
@@ -549,10 +396,7 @@ mod test {
         let service_id = first_service_id(&server_test.services()).await;
         let ws_stream = match connect_async(server_test.url_for_with_protocol(
             "ws",
-            &format!(
-                "/public/services/{service_id}/combined_output?token={}",
-                server_test.valid_token()
-            ),
+            &format!("/public/services/{service_id}/combined_output"),
         ))
         .await
         {
@@ -584,13 +428,10 @@ mod test {
         initialize_tests();
         let server_test = ServerTest::new(true).await;
         let service_id = first_service_id(&server_test.services()).await;
-        let ws_stream = match connect_async(server_test.url_for_with_protocol(
-            "ws",
-            &format!(
-                "/public/services/{service_id}/stderr?token={}",
-                server_test.valid_token()
-            ),
-        ))
+        let ws_stream = match connect_async(
+            server_test
+                .url_for_with_protocol("ws", &format!("/public/services/{service_id}/stderr")),
+        )
         .await
         {
             Ok((stream, _)) => stream,
@@ -617,10 +458,6 @@ mod test {
         let response = server_test
             .client
             .post(server_test.url_for(&format!("/public/services/{service_id}/stop")))
-            .header(
-                "Authorization",
-                format!("Bearer {}", server_test.valid_token()),
-            )
             .send()
             .await
             .unwrap();
@@ -635,10 +472,6 @@ mod test {
         let response = server_test
             .client
             .post(server_test.url_for("/public/services/_i_am_not_a_known_service_/stop"))
-            .header(
-                "Authorization",
-                format!("Bearer {}", server_test.valid_token()),
-            )
             .send()
             .await
             .unwrap();
@@ -653,10 +486,6 @@ mod test {
         let response = server_test
             .client
             .post(server_test.url_for("/public/services/f4d916f7-1fcd-4dcd-8d08-f66f82c0735b/stop"))
-            .header(
-                "Authorization",
-                format!("Bearer {}", server_test.valid_token()),
-            )
             .send()
             .await
             .unwrap();
@@ -673,10 +502,6 @@ mod test {
         let response = server_test
             .client
             .post(server_test.url_for(&format!("/public/services/{service_id}/stop")))
-            .header(
-                "Authorization",
-                format!("Bearer {}", server_test.valid_token()),
-            )
             .send()
             .await
             .unwrap();
@@ -685,10 +510,6 @@ mod test {
         let response = server_test
             .client
             .post(server_test.url_for(&format!("/public/services/{service_id}/stop")))
-            .header(
-                "Authorization",
-                format!("Bearer {}", server_test.valid_token()),
-            )
             .send()
             .await
             .unwrap();
@@ -706,10 +527,6 @@ mod test {
         let response = server_test
             .client
             .post(server_test.url_for(&format!("/public/services/{service_id}/start")))
-            .header(
-                "Authorization",
-                format!("Bearer {}", server_test.valid_token()),
-            )
             .send()
             .await
             .unwrap();
@@ -718,10 +535,6 @@ mod test {
         let response = server_test
             .client
             .post(server_test.url_for(&format!("/public/services/{service_id}/stop")))
-            .header(
-                "Authorization",
-                format!("Bearer {}", server_test.valid_token()),
-            )
             .send()
             .await
             .unwrap();
@@ -737,10 +550,6 @@ mod test {
         let response = server_test
             .client
             .get(server_test.url_for("/public/services"))
-            .header(
-                "Authorization",
-                format!("Bearer {}", server_test.valid_token()),
-            )
             .send()
             .await
             .unwrap();
@@ -759,10 +568,6 @@ mod test {
         let response = server_test
             .client
             .post(server_test.url_for(&format!("/public/services/{service_id}/start")))
-            .header(
-                "Authorization",
-                format!("Bearer {}", server_test.valid_token()),
-            )
             .send()
             .await
             .unwrap();
@@ -771,10 +576,6 @@ mod test {
         let response = server_test
             .client
             .get(server_test.url_for("/public/services"))
-            .header(
-                "Authorization",
-                format!("Bearer {}", server_test.valid_token()),
-            )
             .send()
             .await
             .unwrap();

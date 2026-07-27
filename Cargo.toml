@@ -29,10 +29,8 @@ env_logger = "0.11.10"
 bytes = "1"
 rand = "0.10.1"
 
-headers = "0.4"
 axum = { version = "0.8.9", features = ["ws", "macros"] }
-axum-extra = { version = "0.12.6", features = ["typed-header", "with-rejection"] }
-
+axum-extra = { version = "0.12.6", features = ["with-rejection"] }
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6.10", features = ["fs", "trace"] }
 tokio-tungstenite = "0.29"
@@ -57,7 +55,6 @@ base64 = "0.22.1"
 futures = "0.3.32"
 defguard_wireguard_rs = "0.9.6"
 x25519-dalek = "2"
-jsonwebtoken = { version = "10.4.0", features = ["rust_crypto"] }
 regex = "1"
 
 [dependencies.uuid]
