@@ -5,7 +5,6 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub struct KittengridApi {
-    api_token: String,
     api_url: String,
     client: reqwest::Client,
     config: Config,
@@ -31,11 +30,6 @@ pub enum KittengridApiError {
     DeserializationError(String),
 }
 
-#[derive(Deserialize)]
-struct RegisterAgentResponse {
-    token: String,
-}
-
 pub async fn from_registration(config: &Config) -> Result<KittengridApi, KittengridApiError> {
     let client = reqwest::Client::new();
     let res = client
@@ -53,18 +47,11 @@ pub async fn from_registration(config: &Config) -> Result<KittengridApi, Kitteng
     match res {
         Ok(res) => {
             if res.status().is_success() {
-                match res.json::<RegisterAgentResponse>().await {
-                    Ok(data) => {
-                        let api_token = data.token;
-                        Ok(KittengridApi {
-                            api_token,
-                            config: config.clone(),
-                            api_url: config.api_url.clone(),
-                            client,
-                        })
-                    }
-                    Err(e) => Err(KittengridApiError::DeserializationError(e.to_string())),
-                }
+                Ok(KittengridApi {
+                    config: config.clone(),
+                    api_url: config.api_url.clone(),
+                    client,
+                })
             } else {
                 Err(process_api_status_error_from_response(res).await)
             }
@@ -365,21 +352,28 @@ impl KittengridApi {
     }
 
     pub fn post(&self, path: &str) -> reqwest::RequestBuilder {
-        self.client
-            .post(format!("{}/{}", self.api_url, path))
-            .header("Authorization", format!("Bearer {}", self.api_token))
+        self.agent_request(self.client.post(format!("{}/{}", self.api_url, path)))
     }
 
     pub fn put(&self, path: &str) -> reqwest::RequestBuilder {
-        self.client
-            .put(format!("{}/{}", self.api_url, path))
-            .header("Authorization", format!("Bearer {}", self.api_token))
+        self.agent_request(self.client.put(format!("{}/{}", self.api_url, path)))
     }
 
     pub fn get(&self, path: &str) -> reqwest::RequestBuilder {
-        self.client
-            .get(format!("{}/{}", self.api_url, path))
-            .header("Authorization", format!("Bearer {}", self.api_token))
+        self.agent_request(self.client.get(format!("{}/{}", self.api_url, path)))
+    }
+
+    fn agent_request(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        request
+            .header("Authorization", format!("Bearer {}", self.config.api_key))
+            .query(&[
+                ("vcs_provider", self.config.vcs_provider.as_str()),
+                ("project_vcs_path", self.config.project_vcs_path.as_str()),
+                (
+                    "pull_request_vcs_id",
+                    self.config.pull_request_vcs_id.as_str(),
+                ),
+            ])
     }
 }
 
@@ -401,7 +395,10 @@ mod test {
             .await
             .unwrap();
 
-        assert!(!kittengrid_api.api_token.is_empty());
+        assert_eq!(
+            kittengrid_api.config.api_key,
+            crate::config::get_config().api_key
+        );
     }
 
     // We need to stub the API calls
