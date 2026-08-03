@@ -57,14 +57,12 @@ impl ServiceDescription {
     }
 }
 
-#[derive(Debug, Serialize, Clone, Copy)]
-#[derive(Default)]
+#[derive(Debug, Serialize, Clone, Copy, Default)]
 pub enum ServiceStatus {
     Running,
     #[default]
     Stopped,
 }
-
 
 #[derive(Default, Debug)]
 pub struct Service {
@@ -207,6 +205,7 @@ impl Service {
                 match process_controller.stop().await {
                     Ok(()) => {
                         self.status = ServiceStatus::Stopped;
+                        self.publish_stopped_status().await;
                     }
                     Err(e) => {
                         error!(
@@ -218,23 +217,27 @@ impl Service {
             }
             None => {
                 self.status = ServiceStatus::Stopped;
-                if let Some(kittengrid_api) = self.kittengrid_api().await {
-                    if let Err(e) = kittengrid_api
-                        .services_update_status(
-                            self.id,
-                            Some(crate::kittengrid_api::ServiceStatus::Exited),
-                            None,
-                            None,
-                        )
-                        .await
-                    {
-                        error!("Error updating already stopped service status: {:?}", e);
-                    }
-                }
+                self.publish_stopped_status().await;
                 info!("Service {} was not running", self.description.name);
             }
         }
         Ok(())
+    }
+
+    async fn publish_stopped_status(&self) {
+        if let Some(kittengrid_api) = self.kittengrid_api().await {
+            if let Err(e) = kittengrid_api
+                .services_update_status(
+                    self.id,
+                    Some(crate::kittengrid_api::ServiceStatus::Stopped),
+                    None,
+                    None,
+                )
+                .await
+            {
+                error!("Error updating service status to stopped: {:?}", e);
+            }
+        }
     }
 
     pub fn injected_env(&self) -> HashMap<String, String> {

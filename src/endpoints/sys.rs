@@ -1,9 +1,12 @@
 // GET /sys/shutdown
 //
 // Description: Shuts down the server
-use axum::Json;
+use axum::{extract::State, Json};
 use axum_extra::extract::WithRejection;
 use serde::Deserialize;
+use std::sync::Arc;
+
+use crate::AxumState;
 
 #[derive(Deserialize)]
 pub struct ShutdownParams {
@@ -12,10 +15,14 @@ pub struct ShutdownParams {
 
 #[axum::debug_handler]
 pub async fn shutdown(
+    State(state): State<Arc<AxumState>>,
     params: WithRejection<Json<ShutdownParams>, crate::api_error::ApiError>,
 ) -> &'static str {
     log::info!("Shutting down: {}", params.0.message);
     tokio::spawn(async move {
+        if let Err(error) = state.services.stop().await {
+            log::error!("Error stopping services during shutdown: {}", error);
+        }
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
         std::process::exit(0);
     });
