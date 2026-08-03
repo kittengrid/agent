@@ -136,6 +136,7 @@ impl fmt::Display for PullRequestStatus {
 #[derive(Debug, Clone)]
 pub enum ServiceStatus {
     Created,
+    Stopped,
     Running,
     Paused,
     Exited,
@@ -147,6 +148,7 @@ impl fmt::Display for ServiceStatus {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             ServiceStatus::Created => write!(f, "created"),
+            ServiceStatus::Stopped => write!(f, "stopped"),
             ServiceStatus::Running => write!(f, "running"),
             ServiceStatus::Paused => write!(f, "paused"),
             ServiceStatus::Exited => write!(f, "exited"),
@@ -191,12 +193,18 @@ impl KittengridApi {
         id: Uuid,
         name: String,
     ) -> Result<(), KittengridApiError> {
+        let status = if self.config.start_services {
+            ServiceStatus::Created
+        } else {
+            ServiceStatus::Stopped
+        };
         let res = self
             .post("api/agents/service")
             .json(&serde_json::json!({
                 "name": name,
                 "id": id.to_string(),
                 "sha": self.config.last_commit_sha,
+                "status": status.to_string(),
             }))
             .send()
             .await;
