@@ -106,7 +106,8 @@ pub async fn stdout(
         Err(response) => return response,
     };
 
-    ws.on_upgrade(move |socket| handle_socket(socket, addr, id, services, ServiceStream::Stdout))
+    ws.protocols(["kittengrid"])
+        .on_upgrade(move |socket| handle_socket(socket, addr, id, services, ServiceStream::Stdout))
         .into_response()
 }
 
@@ -132,7 +133,8 @@ pub async fn combined_output(
         Err(response) => return response,
     };
 
-    ws.on_upgrade(move |socket| handle_socket_combined(socket, addr, id, services))
+    ws.protocols(["kittengrid"])
+        .on_upgrade(move |socket| handle_socket_combined(socket, addr, id, services))
         .into_response()
 }
 
@@ -151,7 +153,8 @@ pub async fn stderr(
         Err(response) => return response,
     };
 
-    ws.on_upgrade(move |socket| handle_socket(socket, addr, id, services, ServiceStream::Stderr))
+    ws.protocols(["kittengrid"])
+        .on_upgrade(move |socket| handle_socket(socket, addr, id, services, ServiceStream::Stderr))
         .into_response()
 }
 
