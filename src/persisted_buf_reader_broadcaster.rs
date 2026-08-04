@@ -120,31 +120,51 @@ impl PersistedBufReaderBroadcaster {
         let join_handle = tokio::spawn({
             let cancel_token = self.cancel_token.clone();
             let channel_set = self.channel_set.clone();
-            let mut buf = Vec::new();
             let output_mode = self.output_mode.clone();
             async move {
+                let (data_sender, mut data_receiver) = tokio::sync::mpsc::channel::<Vec<u8>>(32);
+                tokio::task::spawn_blocking(move || {
+                    let mut buf = Vec::new();
+                    loop {
+                        // Child stdout/stderr are synchronous readers. Keep blocking reads off
+                        // Tokio's worker threads so quiet services cannot stall the HTTP and
+                        // WebSocket runtime.
+                        debug!("Going to read from the buffer.");
+                        match buffer.read_until(b'\n', &mut buf) {
+                            Ok(0) => {
+                                debug!("EOF reached, stopping the reader task.");
+                                break;
+                            }
+                            Ok(_) => {
+                                let data = std::mem::take(&mut buf);
+                                if data_sender.blocking_send(data).is_err() {
+                                    break;
+                                }
+                            }
+                            Err(error) => {
+                                error!("Error reading service output: {}", error);
+                                break;
+                            }
+                        }
+                    }
+                });
+
                 loop {
                     tokio::select! {
                         _ = cancel_token.cancelled() => {
                             debug!("Cancellation request received, stopping the task.");
                             break;
                         }
-                        _ = async {
-                            // we use read_until because we want to be able to read binary data (terminal escapes sequences?)
-                            debug!("Going to read from the buffer.");
-                            if buffer.read_until(b'\n', &mut buf).unwrap() == 0 {
-                                debug!("EOF reached, stopping the task.");
-                                cancel_token.cancel();
-                            } else {
-                                if !matches!(output_mode, OutputMode::None) {
-                                    Self::write_to_static_output(&output_mode, buf.clone()).await;
-                                }
-
-                                channel_set.broadcast(buf.clone().into()).await;
-                                buf.clear();
-                                debug!("Data sent");
+                        data = data_receiver.recv() => {
+                            let Some(data) = data else {
+                                break;
+                            };
+                            if !matches!(output_mode, OutputMode::None) {
+                                Self::write_to_static_output(&output_mode, &data);
                             }
-                        } => {}
+                            channel_set.broadcast(data.into()).await;
+                            debug!("Data sent");
+                        }
                     }
                 }
                 info!("Task finished.");
@@ -154,15 +174,15 @@ impl PersistedBufReaderBroadcaster {
         self.join_handle = Arc::new(Mutex::new(Some(join_handle)));
     }
 
-    async fn write_to_static_output(output_mode: &OutputMode, buf: Vec<u8>) {
+    fn write_to_static_output(output_mode: &OutputMode, buf: &[u8]) {
         match output_mode {
             OutputMode::Stdout => {
-                if let Err(e) = std::io::stdout().write_all(&buf) {
+                if let Err(e) = std::io::stdout().write_all(buf) {
                     error!("Error writing to stdout: {}", e);
                 }
             }
             OutputMode::Stderr => {
-                if let Err(e) = std::io::stderr().write_all(&buf) {
+                if let Err(e) = std::io::stderr().write_all(buf) {
                     error!("Error writing to stderr: {}", e);
                 }
             }
@@ -311,6 +331,24 @@ mod tests {
     use super::*;
     use crate::test_utils::StdoutWriter;
     use std::io::{BufReader, BufWriter, Write};
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn quiet_reader_does_not_block_the_tokio_runtime() {
+        let (reader, writer) = std::os::unix::net::UnixStream::pair().unwrap();
+        let mut broadcaster = PersistedBufReaderBroadcaster::new().await;
+        broadcaster.watch(BufReader::new(reader)).await;
+
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            tokio::time::sleep(std::time::Duration::from_millis(10)),
+        )
+        .await
+        .expect("a blocking output reader stalled the Tokio runtime");
+
+        drop(writer);
+        broadcaster.close().await;
+    }
 
     #[tokio::test]
     async fn test_persisted_buf_reader_broadcaster() {

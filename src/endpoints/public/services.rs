@@ -427,6 +427,34 @@ mod test {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+    async fn test_combined_output_reconnect_replays_history() {
+        initialize_tests();
+        let server_test = ServerTest::new(true).await;
+        let service_id = first_service_id(&server_test.services()).await;
+        let url = server_test.url_for_with_protocol(
+            "ws",
+            &format!("/public/services/{service_id}/combined_output"),
+        );
+
+        let (first_stream, _) = connect_async(&url).await.unwrap();
+        let (_, mut first_receiver) = first_stream.split();
+        tokio::time::timeout(std::time::Duration::from_secs(2), first_receiver.next())
+            .await
+            .expect("first connection did not receive output");
+        drop(first_receiver);
+
+        let (second_stream, _) = connect_async(&url).await.unwrap();
+        let (_, mut second_receiver) = second_stream.split();
+        let replayed =
+            tokio::time::timeout(std::time::Duration::from_secs(2), second_receiver.next())
+                .await
+                .expect("reconnected client did not receive historic output");
+
+        assert!(replayed.is_some());
+        server_test.services().stop().await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     async fn test_stderr() {
         initialize_tests();
         let server_test = ServerTest::new(true).await;
