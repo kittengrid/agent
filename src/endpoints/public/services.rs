@@ -1,7 +1,5 @@
 use crate::service::{ServiceStream, Services};
 use crate::AxumState;
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use axum::{
     body::Body,
     extract::{
@@ -111,33 +109,6 @@ pub async fn stdout(
         .into_response()
 }
 
-/// GET /public/services/:id/combined_output
-///
-/// Description: Connects to the stdout and stderr of the service by its id (404  if not found)
-/// it will stream the stdout and stderr to the client using a json structure of:
-/// {
-///     "type": "stdout" | "stderr",
-///     "data": "data"
-///     "timestamp": "2023-01-01T00:00:00Z"
-/// }
-pub async fn combined_output(
-    path: Result<Path<uuid::Uuid>, PathRejection>,
-    State(state): State<Arc<AxumState>>,
-    ws: WebSocketUpgrade,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-) -> Response {
-    let services = state.services.clone();
-
-    let id = match find_service(path, &services).await {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
-
-    ws.protocols(["kittengrid"])
-        .on_upgrade(move |socket| handle_socket_combined(socket, addr, id, services))
-        .into_response()
-}
-
 /// GET /public/services/:id/stderr
 ///
 /// Description: Connects to the stderr of the service by its id (404  if not found)
@@ -155,6 +126,35 @@ pub async fn stderr(
 
     ws.protocols(["kittengrid"])
         .on_upgrade(move |socket| handle_socket(socket, addr, id, services, ServiceStream::Stderr))
+        .into_response()
+}
+
+/// GET /public/services/:id/combined_output
+///
+/// Description: Connects to the stdout and stderr of the service by its id (404  if not found)
+/// it will stream the stdout and stderr to the client using a json structure of:
+/// {
+///     "sequence": 42,
+///     "type": "stdout" | "stderr",
+///     "data": [byte, ...],
+///     "timestamp": 1754326800123
+/// }
+/// Sequence is authoritative for ordering; timestamp is Unix time in milliseconds.
+pub async fn combined_output(
+    path: Result<Path<uuid::Uuid>, PathRejection>,
+    State(state): State<Arc<AxumState>>,
+    ws: WebSocketUpgrade,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+) -> Response {
+    let services = state.services.clone();
+
+    let id = match find_service(path, &services).await {
+        Ok(id) => id,
+        Err(response) => return response,
+    };
+
+    ws.protocols(["kittengrid"])
+        .on_upgrade(move |socket| handle_socket_combined(socket, addr, id, services))
         .into_response()
 }
 
@@ -209,34 +209,17 @@ async fn handle_socket_combined(
     id: uuid::Uuid,
     services: Arc<crate::service::Services>,
 ) {
-    let mut stdout_stream_channel_receiver = match services
-        .subscribe_to_stream(id, ServiceStream::Stdout)
-        .await
-    {
+    let mut receiver = match services.subscribe_to_combined_output(id).await {
         Some(receiver) => receiver,
         None => {
-            error!("Could not subscribe to {id} stdout channel");
+            error!("Could not subscribe to {id} combined output channel");
             return;
         }
     };
 
-    let mut stderr_stream_channel_receiver = match services
-        .subscribe_to_stream(id, ServiceStream::Stderr)
-        .await
-    {
-        Some(receiver) => receiver,
-        None => {
-            error!("Could not subscribe to {id} stderr channel");
-            return;
-        }
-    };
-
-    while let (Some(data), source) = tokio::select! {
-        data = stdout_stream_channel_receiver.recv() => (data, ServiceStream::Stdout),
-        data = stderr_stream_channel_receiver.recv() => (data, ServiceStream::Stderr),
-    } {
-        debug!("Received data from {id}:");
-        let data = create_stream_output_json(&source, &data);
+    while let Some(entry) = receiver.recv().await {
+        debug!("Received combined output from {id}:");
+        let data = create_stream_output_json(&entry);
 
         if socket
             .send(Message::Text(data.to_string().into()))
@@ -248,19 +231,12 @@ async fn handle_socket_combined(
         }
     }
 
-    info!("Websocket disconnected, dropping internal stream.");
+    info!("Websocket disconnected, dropping internal combined stream.");
     if let Err(e) = services
-        .unsubscribe_from_stream(id, ServiceStream::Stdout, stdout_stream_channel_receiver)
+        .unsubscribe_from_combined_output(id, receiver)
         .await
     {
-        error!("Could not unsubscribe from {id} stdout channel! {e}");
-    }
-
-    if let Err(e) = services
-        .unsubscribe_from_stream(id, ServiceStream::Stderr, stderr_stream_channel_receiver)
-        .await
-    {
-        error!("Could not unsubscribe from {id} stderr channel! {e}");
+        error!("Could not unsubscribe from {id} combined output channel! {e}");
     }
 
     if let Err(e) = socket
@@ -315,17 +291,12 @@ fn error_response(err: Box<dyn std::error::Error>) -> Response {
         .into_response()
 }
 
-fn create_stream_output_json(
-    stream_type: &ServiceStream,
-    data: &bytes::Bytes,
-) -> serde_json::Value {
+fn create_stream_output_json(entry: &crate::service::CombinedOutputEntry) -> serde_json::Value {
     json!({
-        "type": stream_type.to_string(),
-        "data": &data.to_vec(),
-        "timestamp": SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs(),
+        "sequence": entry.sequence,
+        "type": entry.stream.to_string(),
+        "data": entry.data.to_vec(),
+        "timestamp": entry.timestamp,
     })
 }
 
@@ -445,12 +416,27 @@ mod test {
 
         let (second_stream, _) = connect_async(&url).await.unwrap();
         let (_, mut second_receiver) = second_stream.split();
-        let replayed =
-            tokio::time::timeout(std::time::Duration::from_secs(2), second_receiver.next())
-                .await
-                .expect("reconnected client did not receive historic output");
+        let replayed = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            let mut entries = Vec::new();
+            while entries.len() < 4 {
+                let message = second_receiver.next().await.unwrap().unwrap();
+                entries.push(
+                    serde_json::from_slice::<serde_json::Value>(&message.into_data()).unwrap(),
+                );
+            }
+            entries
+        })
+        .await
+        .expect("reconnected client did not receive historic combined output");
 
-        assert!(replayed.is_some());
+        assert!(replayed.iter().any(|entry| entry["type"] == "stdout"));
+        assert!(replayed.iter().any(|entry| entry["type"] == "stderr"));
+        let sequences: Vec<u64> = replayed
+            .iter()
+            .map(|entry| entry["sequence"].as_u64().unwrap())
+            .collect();
+        assert!(sequences.windows(2).all(|pair| pair[0] < pair[1]));
+
         server_test.services().stop().await.unwrap();
     }
 

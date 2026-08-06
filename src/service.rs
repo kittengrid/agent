@@ -13,7 +13,8 @@ use std::{collections::HashMap, process::ExitStatus};
 use std::io::BufReader;
 use std::process::Command;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::{mpsc, Mutex};
 
 use crate::config;
 
@@ -72,6 +73,7 @@ pub struct Service {
     process_controller: Option<ProcessController>,
     stdout: PersistedBufReaderBroadcaster,
     stderr: PersistedBufReaderBroadcaster,
+    combined_output: CombinedOutputBroadcaster,
     status: ServiceStatus,
     kittengrid_api: Arc<Mutex<Option<KittengridApi>>>,
 }
@@ -102,6 +104,74 @@ impl From<config::ServiceConfig> for Service {
 pub enum ServiceStream {
     Stdout,
     Stderr,
+}
+
+#[derive(Clone, Debug)]
+pub struct CombinedOutputEntry {
+    pub sequence: u64,
+    pub timestamp: u64,
+    pub stream: ServiceStream,
+    pub data: bytes::Bytes,
+}
+
+#[derive(Default, Debug)]
+struct CombinedOutputState {
+    next_sequence: u64,
+    history: Vec<CombinedOutputEntry>,
+    senders: HashMap<uuid::Uuid, mpsc::UnboundedSender<CombinedOutputEntry>>,
+}
+
+#[derive(Clone, Default, Debug)]
+pub struct CombinedOutputBroadcaster {
+    state: Arc<Mutex<CombinedOutputState>>,
+}
+
+impl CombinedOutputBroadcaster {
+    pub async fn publish(&self, stream: ServiceStream, data: bytes::Bytes) {
+        let mut state = self.state.lock().await;
+        let entry = CombinedOutputEntry {
+            sequence: state.next_sequence,
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+            stream,
+            data,
+        };
+        state.next_sequence += 1;
+        state.history.push(entry.clone());
+        state
+            .senders
+            .retain(|_, sender| sender.send(entry.clone()).is_ok());
+    }
+
+    pub async fn subscribe(&self) -> CombinedOutputReceiver {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        let mut state = self.state.lock().await;
+        for entry in &state.history {
+            // The receiver exists for the lifetime of this loop.
+            sender.send(entry.clone()).unwrap();
+        }
+        let id = uuid::Uuid::new_v4();
+        state.senders.insert(id, sender);
+        CombinedOutputReceiver { id, receiver }
+    }
+
+    pub async fn unsubscribe(&self, receiver: CombinedOutputReceiver) {
+        self.state.lock().await.senders.remove(&receiver.id);
+    }
+}
+
+#[derive(Debug)]
+pub struct CombinedOutputReceiver {
+    id: uuid::Uuid,
+    receiver: mpsc::UnboundedReceiver<CombinedOutputEntry>,
+}
+
+impl CombinedOutputReceiver {
+    pub async fn recv(&mut self) -> Option<CombinedOutputEntry> {
+        self.receiver.recv().await
+    }
 }
 
 impl std::fmt::Display for ServiceStream {
@@ -299,6 +369,21 @@ impl Service {
                 return Err(e);
             }
         };
+        let combined_output = self.combined_output.clone();
+        self.stdout.set_on_data_callback(Arc::new(move |data| {
+            let combined_output = combined_output.clone();
+            Box::pin(async move {
+                combined_output.publish(ServiceStream::Stdout, data).await;
+            })
+        }));
+        let combined_output = self.combined_output.clone();
+        self.stderr.set_on_data_callback(Arc::new(move |data| {
+            let combined_output = combined_output.clone();
+            Box::pin(async move {
+                combined_output.publish(ServiceStream::Stderr, data).await;
+            })
+        }));
+
         let stdout = BufReader::new(child.stdout.take().expect("stdout is None"));
         self.stdout.watch(stdout).await;
 
@@ -554,6 +639,34 @@ impl Services {
         };
 
         Some(stream.subscribe().await)
+    }
+
+    pub async fn subscribe_to_combined_output(
+        &self,
+        id: uuid::Uuid,
+    ) -> Option<CombinedOutputReceiver> {
+        let service = self.services.lock().await.get(&id).cloned()?;
+        let combined_output = service.lock().await.combined_output.clone();
+        Some(combined_output.subscribe().await)
+    }
+
+    pub async fn unsubscribe_from_combined_output(
+        &self,
+        id: uuid::Uuid,
+        receiver: CombinedOutputReceiver,
+    ) -> Result<(), std::io::Error> {
+        let service = self
+            .services
+            .lock()
+            .await
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::NotFound, "Service not found")
+            })?;
+        let combined_output = service.lock().await.combined_output.clone();
+        combined_output.unsubscribe(receiver).await;
+        Ok(())
     }
 
     /// Returns a stream reader for a service if found.

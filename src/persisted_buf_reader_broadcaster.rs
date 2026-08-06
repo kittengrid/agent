@@ -1,8 +1,10 @@
 use bytes::Bytes;
 use log::{debug, error, info};
 use std::collections::HashMap;
+use std::future::Future;
 use std::io::BufRead;
 use std::io::Write;
+use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -43,12 +45,15 @@ pub enum OutputMode {
     None,
 }
 
+pub type OnDataCallback = dyn Fn(Bytes) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync;
+
 #[derive(Clone, Default)]
 pub struct PersistedBufReaderBroadcaster {
     channel_set: ChannelSet,
     join_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     cancel_token: tokio_util::sync::CancellationToken,
     output_mode: OutputMode,
+    on_data: Option<Arc<OnDataCallback>>,
 }
 
 impl std::fmt::Debug for PersistedBufReaderBroadcaster {
@@ -92,11 +97,16 @@ impl PersistedBufReaderBroadcaster {
             join_handle: Arc::new(Mutex::new(None)),
             cancel_token: tokio_util::sync::CancellationToken::new(),
             output_mode: OutputMode::None,
+            on_data: None,
         }
     }
 
     pub fn set_output_mode(&mut self, output_mode: OutputMode) {
         self.output_mode = output_mode;
+    }
+
+    pub fn set_on_data_callback(&mut self, callback: Arc<OnDataCallback>) {
+        self.on_data = Some(callback);
     }
 
     pub async fn close(&mut self) {
@@ -121,6 +131,7 @@ impl PersistedBufReaderBroadcaster {
             let cancel_token = self.cancel_token.clone();
             let channel_set = self.channel_set.clone();
             let output_mode = self.output_mode.clone();
+            let on_data = self.on_data.clone();
             async move {
                 let (data_sender, mut data_receiver) = tokio::sync::mpsc::channel::<Vec<u8>>(32);
                 tokio::task::spawn_blocking(move || {
@@ -162,7 +173,11 @@ impl PersistedBufReaderBroadcaster {
                             if !matches!(output_mode, OutputMode::None) {
                                 Self::write_to_static_output(&output_mode, &data);
                             }
-                            channel_set.broadcast(data.into()).await;
+                            let data = Bytes::from(data);
+                            if let Some(callback) = &on_data {
+                                callback(data.clone()).await;
+                            }
+                            channel_set.broadcast(data).await;
                             debug!("Data sent");
                         }
                     }
