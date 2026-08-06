@@ -385,6 +385,7 @@ mod tests {
 
         let mut receiver = broadcaster.subscribe().await;
         assert_eq!(receiver.recv().await.unwrap(), "foo\n".to_string());
+        assert_eq!(receiver.recv().await.unwrap(), "bar\n".to_string());
         let mut receiver2 = broadcaster.subscribe().await;
         assert_eq!(receiver2.recv().await.unwrap(), "foo\nbar\n".to_string());
         broadcaster.close().await;

@@ -409,22 +409,36 @@ mod test {
 
         let (first_stream, _) = connect_async(&url).await.unwrap();
         let (_, mut first_receiver) = first_stream.split();
-        tokio::time::timeout(std::time::Duration::from_secs(2), first_receiver.next())
-            .await
-            .expect("first connection did not receive output");
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            let mut has_stdout = false;
+            let mut has_stderr = false;
+            while !has_stdout || !has_stderr {
+                let message = first_receiver.next().await.unwrap().unwrap();
+                let entry: serde_json::Value =
+                    serde_json::from_slice(&message.into_data()).unwrap();
+                has_stdout |= entry["type"] == "stdout";
+                has_stderr |= entry["type"] == "stderr";
+            }
+        })
+        .await
+        .expect("first connection did not receive both output streams");
         drop(first_receiver);
 
         let (second_stream, _) = connect_async(&url).await.unwrap();
         let (_, mut second_receiver) = second_stream.split();
         let replayed = tokio::time::timeout(std::time::Duration::from_secs(2), async {
             let mut entries = Vec::new();
-            while entries.len() < 4 {
+            loop {
                 let message = second_receiver.next().await.unwrap().unwrap();
                 entries.push(
                     serde_json::from_slice::<serde_json::Value>(&message.into_data()).unwrap(),
                 );
+                let has_stdout = entries.iter().any(|entry| entry["type"] == "stdout");
+                let has_stderr = entries.iter().any(|entry| entry["type"] == "stderr");
+                if has_stdout && has_stderr {
+                    break entries;
+                }
             }
-            entries
         })
         .await
         .expect("reconnected client did not receive historic combined output");
