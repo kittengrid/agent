@@ -11,6 +11,7 @@ pub struct KittengridAgent {
     config: Config,
     api: Option<crate::kittengrid_api::KittengridApi>,
     services: Arc<crate::service::Services>,
+    capabilities: crate::Capabilities,
     local_addr: Option<std::net::SocketAddr>,
 }
 
@@ -33,6 +34,13 @@ pub enum KittengridAgentError {
 impl KittengridAgent {
     pub fn services(&self) -> Arc<crate::service::Services> {
         self.services.clone()
+    }
+
+    pub fn set_terminal_url(&mut self, url: String) {
+        self.capabilities.terminal = crate::TerminalCapability {
+            available: true,
+            url: Some(url),
+        };
     }
 
     pub fn new(config: Config) -> Self {
@@ -266,6 +274,11 @@ impl KittengridAgent {
     }
 
     pub async fn wait(&self, listener: tokio::net::TcpListener) {
-        crate::launch(listener, Arc::clone(&self.services)).await;
+        crate::launch(
+            listener,
+            Arc::clone(&self.services),
+            self.capabilities.clone(),
+        )
+        .await;
     }
 }

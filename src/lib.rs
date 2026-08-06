@@ -26,8 +26,40 @@ extern crate alloc;
 
 extern crate log;
 
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct TerminalCapability {
+    pub available: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+}
+
+impl Default for TerminalCapability {
+    fn default() -> Self {
+        Self {
+            available: false,
+            url: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct Capabilities {
+    pub version: u8,
+    pub terminal: TerminalCapability,
+}
+
+impl Default for Capabilities {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            terminal: TerminalCapability::default(),
+        }
+    }
+}
+
 pub struct AxumState {
     services: Arc<crate::service::Services>,
+    capabilities: Capabilities,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
@@ -49,6 +81,10 @@ pub fn router(state: AxumState) -> Router {
     Router::new()
         .route("/sys/hello", get(endpoints::sys::hello))
         .route("/sys/shutdown", post(endpoints::sys::shutdown))
+        .route(
+            "/public/capabilities",
+            get(endpoints::public::capabilities::index),
+        )
         .route("/public/services", get(endpoints::public::services::index))
         .route(
             "/public/services/{id}/stdout",
@@ -77,8 +113,15 @@ pub fn router(state: AxumState) -> Router {
         )
 }
 
-pub async fn launch(listener: tokio::net::TcpListener, services: Arc<crate::service::Services>) {
-    let state = AxumState { services };
+pub async fn launch(
+    listener: tokio::net::TcpListener,
+    services: Arc<crate::service::Services>,
+    capabilities: Capabilities,
+) {
+    let state = AxumState {
+        services,
+        capabilities,
+    };
     axum::serve(
         listener,
         router(state).into_make_service_with_connect_info::<SocketAddr>(),

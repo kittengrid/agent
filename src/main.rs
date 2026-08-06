@@ -76,6 +76,7 @@ async fn main() {
                 {
                     Ok(public_url) => {
                         info!("Terminal available at: {}", public_url);
+                        agent.set_terminal_url(public_url);
                     }
                     Err(e) => {
                         error!("Failed to register service: {}. {}.", "ttyd", e)
