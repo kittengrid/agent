@@ -41,6 +41,7 @@ impl Default for Executable {
 impl Executable {
     /// Starts the ttyd server with the given base path.
     pub async fn start(&self, base_path: &str) -> Result<u16, Error> {
+        let shell = terminal_shell()?;
         let mut port: u16 = 0;
         let mut child = Command::new(&self.bin_path)
             .arg("-W")
@@ -48,7 +49,7 @@ impl Executable {
             .arg("0")
             .arg("-b")
             .arg(base_path)
-            .arg("bash")
+            .arg(shell)
             .stderr(std::process::Stdio::piped())
             .spawn()?;
 
@@ -82,6 +83,33 @@ impl Executable {
 
         Ok(port)
     }
+}
+
+/// Select a shell that ttyd can execute. Running a trivial command verifies that
+/// the shell is both discoverable via `PATH` and usable, rather than relying on
+/// ttyd to report a child-process failure after its server has started.
+fn terminal_shell() -> Result<&'static str, Error> {
+    let mut failures = Vec::new();
+
+    for shell in ["bash", "sh"] {
+        match Command::new(shell)
+            .arg("-c")
+            .arg("exit 0")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+        {
+            Ok(status) if status.success() => return Ok(shell),
+            Ok(status) => failures.push(format!("{shell} exited with {status}")),
+            Err(error) => failures.push(format!("{shell}: {error}")),
+        }
+    }
+
+    Err(Error::ExecError(format!(
+        "No usable terminal shell found (tried bash, then sh): {}",
+        failures.join("; ")
+    )))
 }
 
 #[cfg(test)]
