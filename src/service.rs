@@ -25,6 +25,7 @@ pub struct ServiceDescription {
     args: Vec<String>,
     env: HashMap<String, String>,
     port: u16,
+    host: String,
     health_check: Option<config::HealthCheck>,
 }
 
@@ -33,6 +34,7 @@ impl From<config::ServiceConfig> for ServiceDescription {
         Self {
             name: config.name.clone(),
             port: config.port,
+            host: config.host.unwrap_or_else(|| "localhost".to_string()),
             env: config.env.unwrap_or_default(),
             args: config.args.unwrap_or_default(),
             cmd: config.cmd.unwrap_or(config.name),
@@ -51,6 +53,10 @@ impl ServiceDescription {
 
     pub fn port(&self) -> u16 {
         self.port
+    }
+
+    pub fn host(&self) -> String {
+        self.host.clone()
     }
 
     pub fn health_check(&self) -> Option<config::HealthCheck> {
@@ -254,6 +260,11 @@ impl Service {
         self.description.port
     }
 
+    /// Returns the hostname where the service accepts connections.
+    pub fn host(&self) -> String {
+        self.description.host.clone()
+    }
+
     pub fn id(&self) -> uuid::Uuid {
         self.id
     }
@@ -412,8 +423,16 @@ impl Service {
         ));
 
         let health_check = self.health_check().map(|health_check| {
-            crate::process_controller::HealthCheck::from_config(health_check, self.port())
+            crate::process_controller::HealthCheck::from_config(
+                health_check,
+                self.host(),
+                self.port(),
+            )
         });
+        let proxy_target_host = match self.host().as_str() {
+            "localhost" | "127.0.0.1" | "::1" => None,
+            host => Some((host.to_string(), self.port())),
+        };
 
         let on_health_status_change_callback = Arc::new(Self::create_health_status_callback(
             self.description.name.clone(),
@@ -425,6 +444,7 @@ impl Service {
             child,
             on_stop_callback,
             health_check,
+            proxy_target_host,
             Some(on_health_status_change_callback),
         )
         .await;
@@ -734,6 +754,7 @@ mod test {
         let service = Service::from(config.clone());
         assert_eq!(service.description.name, "test");
         assert_eq!(service.description.port, 8080);
+        assert_eq!(service.description.host, "localhost");
         assert_eq!(service.description.cmd, "test");
         assert_eq!(service.description.args, vec!["--port".to_string()]);
         assert_eq!(service.description.env, HashMap::new());

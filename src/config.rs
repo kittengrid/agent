@@ -147,6 +147,8 @@ pub struct Config {
 pub struct ServiceConfig {
     pub name: String,
     pub port: u16,
+    /// Hostname where the service is reachable from the agent. Defaults to localhost.
+    pub host: Option<String>,
     pub cmd: Option<String>,
     pub env: Option<HashMap<String, String>>,
     pub args: Option<Vec<String>>,

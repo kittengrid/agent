@@ -48,6 +48,7 @@ Each service in the `services` array supports the following configuration option
 | Field | Type | Description | Default |
 |-------|------|-------------|---------|
 | `cmd` | string | Command to execute to start the service. | Uses the `name` field value |
+| `host` | string | Hostname where the service is reachable from the agent. When non-local, the agent proxies tunneled traffic on `port` to this host and port. | `localhost` |
 | `args` | array of strings | Command-line arguments to pass to the service. | Empty array |
 | `env` | object | Environment variables to set for the service (key-value pairs). | Empty object |
 | `health_check` | object | Health check configuration for the service. | None |
@@ -100,6 +101,23 @@ services:
       timeout: 5
       retries: 3
       path: /health
+
+  # A Docker-in-Docker service whose published port belongs to the `docker`
+  # service container instead of the agent container.
+  - name: prometheus
+    cmd: docker
+    port: 19090
+    host: docker
+    args:
+      - compose
+      - up
+      - --attach
+      - prometheus
+    health_check:
+      interval: 5
+      timeout: 5
+      retries: 60
+      path: /-/ready
 ```
 
 ## Configuration Inheritance

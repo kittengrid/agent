@@ -1,6 +1,6 @@
 use crate::config::HealthCheck as HealthCheckConfig;
 use crate::HealthStatus;
-use log::{debug, error};
+use log::{debug, error, info};
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use thiserror::Error;
 
+use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast;
 
 use tokio::task::JoinSet;
@@ -30,6 +31,9 @@ pub enum ProcessControllerError {
 
     #[error("Error sending shutdown message: {0}")]
     ChannelSendError(#[from] tokio::sync::broadcast::error::SendError<ServiceCommand>),
+
+    #[error("TCP proxy listener error: {0}")]
+    TcpProxyBind(std::io::Error),
 }
 
 type OnStopCallback = dyn Fn(ExitStatus) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync;
@@ -57,16 +61,18 @@ pub struct HealthCheck {
     pub timeout: u64,
     pub retries: u64,
     pub path: String,
+    pub host: String,
     pub port: u16,
 }
 
 impl HealthCheck {
-    pub fn from_config(health_check: HealthCheckConfig, port: u16) -> Self {
+    pub fn from_config(health_check: HealthCheckConfig, host: String, port: u16) -> Self {
         Self {
             interval: health_check.interval,
             timeout: health_check.timeout,
             retries: health_check.retries,
             path: health_check.path,
+            host,
             port,
         }
     }
@@ -107,6 +113,7 @@ impl ProcessController {
         child: Child,
         on_stop: Arc<OnStopCallback>,
         health_check: Option<HealthCheck>,
+        proxy_target: Option<(String, u16)>,
         health_state_changed: Option<Arc<OnStateChangedCallback>>,
     ) -> Self {
         let (stop_tx, stop_rx) = broadcast::channel(1);
@@ -120,7 +127,14 @@ impl ProcessController {
             stop_tx.clone(),
         ));
 
-        // Spawn the lifecycle check task if configured
+        if let Some((target_host, port)) = proxy_target {
+            set.spawn(Self::spawn_tcp_proxy_task(
+                target_host,
+                port,
+                stop_rx.resubscribe(),
+            ));
+        }
+
         // Spawn the health check task if configured
         if let Some(health_check) = health_check {
             set.spawn(Self::spawn_health_check_task(
@@ -160,7 +174,7 @@ impl ProcessController {
                     }
                 }
                 _ = time::sleep(Duration::from_secs(health_check.interval)) => {
-                    let new_status = reqwest::get(&format!("http://127.0.0.1:{}/{}", health_check.port, health_check.path))
+                    let new_status = reqwest::get(&format!("http://{}:{}/{}", health_check.host, health_check.port, health_check.path))
                         .await
                         .map(|_| HealthStatus::Healthy)
                         .unwrap_or_else(|_| HealthStatus::Unhealthy);
@@ -171,6 +185,44 @@ impl ProcessController {
                             on_state_changed(status).await;
                         }
                     }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Listens locally for tunneled traffic and forwards it to a service in another
+    /// network namespace, such as GitLab's `docker:dind` service container.
+    async fn spawn_tcp_proxy_task(
+        target_host: String,
+        port: u16,
+        mut stop_rx: broadcast::Receiver<ServiceCommand>,
+    ) -> Result<(), ProcessControllerError> {
+        let listener = TcpListener::bind(("0.0.0.0", port))
+            .await
+            .map_err(ProcessControllerError::TcpProxyBind)?;
+        info!("Proxying local port {} to {}:{}", port, target_host, port);
+
+        loop {
+            tokio::select! {
+                message = stop_rx.recv() => match message {
+                    Ok(ServiceCommand::Stop) => break,
+                    Err(error) => return Err(ProcessControllerError::BroadcastReceiveError(error)),
+                },
+                accepted = listener.accept() => {
+                    let (mut client, _) = accepted.map_err(ProcessControllerError::TcpProxyBind)?;
+                    let target_host = target_host.clone();
+                    tokio::spawn(async move {
+                        match TcpStream::connect((target_host.as_str(), port)).await {
+                            Ok(mut target) => {
+                                let _ = tokio::io::copy_bidirectional(&mut client, &mut target).await;
+                            }
+                            Err(error) => {
+                                error!("Failed to connect TCP proxy to {}:{}: {}", target_host, port, error);
+                            }
+                        }
+                    });
                 }
             }
         }
@@ -254,7 +306,7 @@ mod test {
             .spawn()
             .unwrap();
         let mut controller =
-            ProcessController::new(child, Arc::new(closure(data_clone)), None, None).await;
+            ProcessController::new(child, Arc::new(closure(data_clone)), None, None, None).await;
 
         assert!(controller.stop().await.is_ok());
         controller.wait().await.unwrap();
@@ -272,7 +324,7 @@ mod test {
             .spawn()
             .unwrap();
         let mut controller =
-            ProcessController::new(child, Arc::new(closure(data_clone)), None, None).await;
+            ProcessController::new(child, Arc::new(closure(data_clone)), None, None, None).await;
 
         controller.wait().await.unwrap();
         assert_eq!(*data.lock().unwrap(), Some(0));
@@ -289,7 +341,7 @@ mod test {
             .spawn()
             .unwrap();
         let mut controller =
-            ProcessController::new(child, Arc::new(closure(data_clone)), None, None).await;
+            ProcessController::new(child, Arc::new(closure(data_clone)), None, None, None).await;
 
         controller.wait().await.unwrap();
         assert_eq!(*data.lock().unwrap(), Some(1));
@@ -316,8 +368,10 @@ mod test {
                 timeout: 10,
                 retries: 10,
                 path: "/".to_string(),
+                host: "127.0.0.1".to_string(),
                 port: 8000,
             }),
+            None,
             Some(Arc::new({
                 let data = data_clone_2.clone();
                 move |status: crate::HealthStatus| {
