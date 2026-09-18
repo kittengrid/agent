@@ -64,15 +64,23 @@ impl KittengridAgent {
 
     /// Registers the agent with the Kittengrid API. Subsequent requests use
     /// the configured organization API key.
-    pub async fn register(&mut self) -> Result<(), crate::kittengrid_api::KittengridApiError> {
-        let api = crate::kittengrid_api::from_registration(&self.config).await;
-        if let Ok(api) = api {
-            self.api = Some(api.clone());
-            self.services.set_kittengrid_api(Some(api)).await;
-            Ok(())
-        } else {
-            Err(api.err().unwrap())
-        }
+    pub async fn register(
+        &mut self,
+    ) -> Result<crate::kittengrid_api::StartupOptions, crate::kittengrid_api::KittengridApiError>
+    {
+        let (mut api, requested_startup) =
+            crate::kittengrid_api::from_registration(&self.config).await?;
+        let startup_options = crate::kittengrid_api::StartupOptions {
+            start_services: self.config.start_services || requested_startup.start_services,
+            start_terminal: self.config.start_terminal || requested_startup.start_terminal,
+        };
+        api.set_startup_options(
+            startup_options.start_services,
+            startup_options.start_terminal,
+        );
+        self.api = Some(api.clone());
+        self.services.set_kittengrid_api(Some(api)).await;
+        Ok(startup_options)
     }
 
     /// Configures local network with wireguard tunnels.

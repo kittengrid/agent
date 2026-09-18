@@ -17,15 +17,16 @@ async fn main() {
     let listener = agent.bind().await;
 
     // Register with API so we can fetch network configuration
-    match agent.register().await {
-        Ok(_) => {
+    let startup_options = match agent.register().await {
+        Ok(startup_options) => {
             info!("Successfully registered with kittengrid api.");
+            startup_options
         }
         Err(e) => {
             error!("Failed to register with kittengrid api: {}", e);
             exit(1);
         }
-    }
+    };
 
     info!("Publishing service info.");
     match agent.publish_services().await {
@@ -38,7 +39,7 @@ async fn main() {
         }
     }
 
-    if config.start_terminal || config.start_services {
+    if startup_options.start_terminal || startup_options.start_services {
         agent
             .set_status(lib::kittengrid_api::PullRequestStatus::Booting)
             .await;
@@ -55,7 +56,7 @@ async fn main() {
         }
     }
 
-    if config.start_terminal {
+    if startup_options.start_terminal {
         info!("Starting debugging terminal.");
         let id = uuid::Uuid::new_v4();
         match lib::ttyd::Executable::default()
@@ -90,7 +91,7 @@ async fn main() {
         }
     }
 
-    if config.start_services {
+    if startup_options.start_services {
         info!("Registering services.");
         match agent.register_services().await {
             Ok(_) => {
@@ -118,7 +119,7 @@ async fn main() {
         info!("All services spawned. Waiting for incomming requests.");
     }
 
-    if config.start_services || config.start_terminal {
+    if startup_options.start_services || startup_options.start_terminal {
         agent.wait(listener).await;
     } else {
         info!("Service start disabled. Exiting.");
