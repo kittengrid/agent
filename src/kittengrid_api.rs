@@ -30,7 +30,16 @@ pub enum KittengridApiError {
     DeserializationError(String),
 }
 
-pub async fn from_registration(config: &Config) -> Result<KittengridApi, KittengridApiError> {
+#[derive(Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct StartupOptions {
+    pub start_services: bool,
+    pub start_terminal: bool,
+}
+
+pub async fn from_registration(
+    config: &Config,
+) -> Result<(KittengridApi, StartupOptions), KittengridApiError> {
     let client = reqwest::Client::new();
     let res = client
         .post(format!("{}/api/agents/register", config.api_url))
@@ -47,11 +56,18 @@ pub async fn from_registration(config: &Config) -> Result<KittengridApi, Kitteng
     match res {
         Ok(res) => {
             if res.status().is_success() {
-                Ok(KittengridApi {
-                    config: config.clone(),
-                    api_url: config.api_url.clone(),
-                    client,
-                })
+                let startup_options = res
+                    .json::<StartupOptions>()
+                    .await
+                    .map_err(|error| KittengridApiError::DeserializationError(error.to_string()))?;
+                Ok((
+                    KittengridApi {
+                        config: config.clone(),
+                        api_url: config.api_url.clone(),
+                        client,
+                    },
+                    startup_options,
+                ))
             } else {
                 Err(process_api_status_error_from_response(res).await)
             }
@@ -163,6 +179,11 @@ pub struct PeersCreateServiceResponse {
 }
 
 impl KittengridApi {
+    pub fn set_startup_options(&mut self, start_services: bool, start_terminal: bool) {
+        self.config.start_services = start_services;
+        self.config.start_terminal = start_terminal;
+    }
+
     /// Updates a pull_request status using the agents Kittengrid internal api
     pub async fn agents_update_pull_request(
         &self,
@@ -399,9 +420,10 @@ mod test {
     #[ignore]
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     pub async fn from() {
-        let kittengrid_api = crate::kittengrid_api::from_registration(crate::config::get_config())
-            .await
-            .unwrap();
+        let (kittengrid_api, _) =
+            crate::kittengrid_api::from_registration(crate::config::get_config())
+                .await
+                .unwrap();
 
         assert_eq!(
             kittengrid_api.config.api_key,
@@ -442,9 +464,10 @@ mod test {
     #[ignore]
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     async fn peers_create() {
-        let kittengrid_api = crate::kittengrid_api::from_registration(crate::config::get_config())
-            .await
-            .unwrap();
+        let (kittengrid_api, _) =
+            crate::kittengrid_api::from_registration(crate::config::get_config())
+                .await
+                .unwrap();
         let peers = kittengrid_api.peers_create(0).await.unwrap();
         assert!(!peers.is_empty());
     }
@@ -453,9 +476,10 @@ mod test {
     #[ignore]
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     async fn peers_get_endpoint() {
-        let kittengrid_api = crate::kittengrid_api::from_registration(crate::config::get_config())
-            .await
-            .unwrap();
+        let (kittengrid_api, _) =
+            crate::kittengrid_api::from_registration(crate::config::get_config())
+                .await
+                .unwrap();
         let peers = kittengrid_api.peers_create(0).await.unwrap();
         let endpoint = kittengrid_api
             .peers_get_endpoint(peers[0].network.clone())
