@@ -26,6 +26,9 @@ pub enum KittengridApiError {
     #[error("ApiStatusError: {0}")]
     ApiStatusError(String),
 
+    #[error("Change request is closed or merged; registration declined")]
+    RegistrationDeclined,
+
     #[error("DeserializationError: {0}")]
     DeserializationError(String),
 }
@@ -68,6 +71,10 @@ pub async fn from_registration(
                     },
                     startup_options,
                 ))
+            } else if res.status() == reqwest::StatusCode::CONFLICT {
+                // Only registration uses 409 to decline provisioning for a
+                // closed/merged change request. Other API conflicts remain errors.
+                Err(KittengridApiError::RegistrationDeclined)
             } else {
                 Err(process_api_status_error_from_response(res).await)
             }
@@ -416,6 +423,83 @@ pub async fn process_api_status_error_from_response(res: reqwest::Response) -> K
 
 #[cfg(test)]
 mod test {
+    use super::*;
+
+    async fn registration_server(
+        status: axum::http::StatusCode,
+        body: &'static str,
+    ) -> (Config, tokio::task::JoinHandle<()>) {
+        let app = axum::Router::new().route(
+            "/api/agents/register",
+            axum::routing::post(move || async move { (status, body) }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let config = Config {
+            api_url: format!("http://{}", listener.local_addr().unwrap()),
+            ..Config::default()
+        };
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (config, server)
+    }
+
+    #[tokio::test]
+    async fn registration_conflict_is_declined_even_with_explicit_startup_flags() {
+        let (mut config, server) = registration_server(axum::http::StatusCode::CONFLICT, "").await;
+        config.start_services = true;
+        config.start_terminal = true;
+        let mut agent = crate::kittengrid_agent::KittengridAgent::new(config);
+        assert!(matches!(
+            agent.register().await,
+            Err(KittengridApiError::RegistrationDeclined)
+        ));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn registration_errors_remain_failures() {
+        for status in [401, 403, 404, 500, 503] {
+            let (config, server) = registration_server(
+                axum::http::StatusCode::from_u16(status).unwrap(),
+                "rejected",
+            )
+            .await;
+            let error = from_registration(&config).await.unwrap_err();
+            if status == 401 {
+                assert!(matches!(error, KittengridApiError::UnauthorizedError(_)));
+            } else {
+                assert!(matches!(error, KittengridApiError::ApiStatusError(_)));
+            }
+            server.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn registration_success_preserves_startup_options() {
+        let (config, server) = registration_server(
+            axum::http::StatusCode::CREATED,
+            r#"{"start_services":true,"start_terminal":false}"#,
+        )
+        .await;
+        let (_, options) = from_registration(&config).await.unwrap();
+        assert!(options.start_services);
+        assert!(!options.start_terminal);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn conflict_from_other_endpoints_remains_an_error() {
+        let response = reqwest::Response::from(
+            axum::http::Response::builder()
+                .status(409)
+                .body("conflict")
+                .unwrap(),
+        );
+        assert!(matches!(
+            process_api_status_error_from_response(response).await,
+            KittengridApiError::ApiStatusError(_)
+        ));
+    }
+
     // We need to stub the API calls
     #[ignore]
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]

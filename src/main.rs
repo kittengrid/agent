@@ -22,6 +22,10 @@ async fn main() {
             info!("Successfully registered with kittengrid api.");
             startup_options
         }
+        Err(lib::kittengrid_api::KittengridApiError::RegistrationDeclined) => {
+            info!("PR/MR is closed or merged. Skipping environment provisioning and exiting successfully.");
+            return;
+        }
         Err(e) => {
             error!("Failed to register with kittengrid api: {}", e);
             exit(1);
