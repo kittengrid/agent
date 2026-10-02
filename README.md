@@ -18,6 +18,10 @@ This is usually ran automatically using the kittengrid/action GitHub Action.
 - **Command-line arguments**: Allows passing command-line arguments to services.
 - **Automatic shutdown**: Based on a timeout of inactivity, the agent will automatically shut down services after a period of inactivity.
 
+## Registration declined for closed or merged requests
+
+If the registration API returns HTTP `409 Conflict`, the PR/MR is no longer open. The agent logs this as an expected outcome and exits successfully without publishing services, configuring tunnels, or starting services or a terminal. Explicit startup flags do not override this rejection. Other registration failures still exit with code `1`.
+
 # KittenGrid Agent Configuration
 
 The KittenGrid agent uses a YAML configuration file to define services that should be managed. By default, the agent looks for `kittengrid.yml` or `kittengrid.yaml` in the current directory.
