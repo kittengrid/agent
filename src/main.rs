@@ -45,7 +45,7 @@ async fn main() {
 
     if startup_options.start_terminal || startup_options.start_services {
         agent
-            .set_status(lib::kittengrid_api::PullRequestStatus::Booting)
+            .set_status(lib::kittengrid_api::EnvironmentStatus::Booting)
             .await;
 
         // Network config
@@ -107,7 +107,7 @@ async fn main() {
             }
         }
         agent
-            .set_status(lib::kittengrid_api::PullRequestStatus::Running)
+            .set_status(lib::kittengrid_api::EnvironmentStatus::Running)
             .await;
 
         info!("All interfaces up. Spawning services.");
@@ -128,7 +128,7 @@ async fn main() {
     } else {
         info!("Service start disabled. Exiting.");
         agent
-            .set_status(lib::kittengrid_api::PullRequestStatus::Sleeping)
+            .set_status(lib::kittengrid_api::EnvironmentStatus::Sleeping)
             .await;
     }
 
