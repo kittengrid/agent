@@ -40,18 +40,35 @@ pub struct StartupOptions {
     pub start_terminal: bool,
 }
 
+fn agent_identity(config: &Config) -> Vec<(&'static str, &str)> {
+    if config.environment_id.is_empty() {
+        vec![
+            ("vcs_provider", config.vcs_provider.as_str()),
+            ("project_vcs_path", config.project_vcs_path.as_str()),
+            ("pull_request_vcs_id", config.pull_request_vcs_id.as_str()),
+        ]
+    } else {
+        vec![("environment_id", config.environment_id.as_str())]
+    }
+}
+
 pub async fn from_registration(
     config: &Config,
 ) -> Result<(KittengridApi, StartupOptions), KittengridApiError> {
     let client = reqwest::Client::new();
+    let mut payload: serde_json::Map<String, serde_json::Value> = agent_identity(config)
+        .into_iter()
+        .map(|(key, value)| (key.to_string(), serde_json::json!(value)))
+        .collect();
+    if !config.workflow_run_id.is_empty() {
+        payload.insert(
+            "workflow_run_id".to_string(),
+            serde_json::json!(config.workflow_run_id),
+        );
+    }
     let res = client
         .post(format!("{}/api/agents/register", config.api_url))
-        .json(&serde_json::json!({
-            "vcs_provider": config.vcs_provider,
-            "pull_request_vcs_id": config.pull_request_vcs_id,
-            "project_vcs_path": config.project_vcs_path,
-            "workflow_run_id": config.workflow_run_id,
-        }))
+        .json(&payload)
         .header("Authorization", format!("Bearer {}", config.api_key))
         .send()
         .await;
@@ -130,7 +147,7 @@ impl Endpoint {
 }
 
 #[derive(Debug, Clone)]
-pub enum PullRequestStatus {
+pub enum EnvironmentStatus {
     Created,
     Degraded,
     Booting,
@@ -138,20 +155,18 @@ pub enum PullRequestStatus {
     Error,
     Running,
     ShuttingDown,
-    Merged,
 }
 
-impl fmt::Display for PullRequestStatus {
+impl fmt::Display for EnvironmentStatus {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            PullRequestStatus::Created => write!(f, "created"),
-            PullRequestStatus::Degraded => write!(f, "degraded"),
-            PullRequestStatus::Booting => write!(f, "booting"),
-            PullRequestStatus::Sleeping => write!(f, "sleeping"),
-            PullRequestStatus::Error => write!(f, "error"),
-            PullRequestStatus::Running => write!(f, "running"),
-            PullRequestStatus::ShuttingDown => write!(f, "shutting_down"),
-            PullRequestStatus::Merged => write!(f, "merged"),
+            EnvironmentStatus::Created => write!(f, "created"),
+            EnvironmentStatus::Degraded => write!(f, "degraded"),
+            EnvironmentStatus::Booting => write!(f, "booting"),
+            EnvironmentStatus::Sleeping => write!(f, "sleeping"),
+            EnvironmentStatus::Error => write!(f, "error"),
+            EnvironmentStatus::Running => write!(f, "running"),
+            EnvironmentStatus::ShuttingDown => write!(f, "shutting_down"),
         }
     }
 }
@@ -191,13 +206,18 @@ impl KittengridApi {
         self.config.start_terminal = start_terminal;
     }
 
-    /// Updates a pull_request status using the agents Kittengrid internal api
-    pub async fn agents_update_pull_request(
+    /// Updates runtime status, retaining the old endpoint for legacy CI agents.
+    pub async fn agents_update_environment(
         &self,
-        status: PullRequestStatus,
+        status: EnvironmentStatus,
     ) -> Result<(), KittengridApiError> {
+        let path = if self.config.environment_id.is_empty() {
+            "api/agents/pull_request"
+        } else {
+            "api/agents/environment"
+        };
         let res = self
-            .put("api/agents/pull_request")
+            .put(path)
             .json(&serde_json::json!({
                 "status": status.to_string(),
             }))
@@ -226,16 +246,16 @@ impl KittengridApi {
         } else {
             ServiceStatus::Stopped
         };
-        let res = self
-            .post("api/agents/service")
-            .json(&serde_json::json!({
-                "name": name,
-                "id": id.to_string(),
-                "sha": self.config.last_commit_sha,
-                "status": status.to_string(),
-            }))
-            .send()
-            .await;
+        let mut payload = serde_json::json!({
+            "name": name,
+            "id": id.to_string(),
+            "status": status.to_string(),
+        });
+        // Development services need no SHA; previews must supply one.
+        if !self.config.last_commit_sha.is_empty() {
+            payload["sha"] = serde_json::json!(self.config.last_commit_sha);
+        }
+        let res = self.post("api/agents/service").json(&payload).send().await;
         match res {
             Ok(res) => {
                 if res.status().is_success() {
@@ -402,14 +422,7 @@ impl KittengridApi {
     fn agent_request(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         request
             .header("Authorization", format!("Bearer {}", self.config.api_key))
-            .query(&[
-                ("vcs_provider", self.config.vcs_provider.as_str()),
-                ("project_vcs_path", self.config.project_vcs_path.as_str()),
-                (
-                    "pull_request_vcs_id",
-                    self.config.pull_request_vcs_id.as_str(),
-                ),
-            ])
+            .query(&agent_identity(&self.config))
     }
 }
 

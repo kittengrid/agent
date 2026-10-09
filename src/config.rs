@@ -39,16 +39,20 @@ fn process_args(args: &mut Args) -> Config {
     };
 
     let mut config = if let Some(path) = &config_path {
-        if let Ok(f) = File::open(path) {
-            // Parse config with serde
-            match serde_yaml::from_reader::<_, <Config as ClapSerde>::Opt>(BufReader::new(f)) {
-                // merge config already parsed from clap
-                Ok(parsed_config) => Config::from(parsed_config).merge(&mut args.config),
-                Err(err) => panic!("Error in configuration file:\n{}", err),
-            }
-        } else {
-            warn!("Config file not found at path: {:?}, proceeding with defaults and command line arguments.", path);
-            Config::from(&mut args.config)
+        let file = File::open(path).unwrap_or_else(|err| {
+            // Configuration is loaded before the logger is initialized.
+            eprintln!(
+                "Failed to open configuration file '{}': {}",
+                path.display(),
+                err
+            );
+            std::process::exit(1);
+        });
+        // Parse config with serde
+        match serde_yaml::from_reader::<_, <Config as ClapSerde>::Opt>(BufReader::new(file)) {
+            // merge config already parsed from clap
+            Ok(parsed_config) => Config::from(parsed_config).merge(&mut args.config),
+            Err(err) => panic!("Error in configuration file:\n{}", err),
         }
     } else {
         Config::from(&mut args.config)
@@ -115,6 +119,10 @@ pub struct Config {
 
     #[arg(long, env("KITTENGRID_API_URL"))]
     pub api_url: String,
+
+    /// Existing environment's public ID. When set, replaces the VCS/PR identity.
+    #[arg(long, env("KITTENGRID_ENVIRONMENT_ID"))]
+    pub environment_id: String,
 
     #[arg(long, env("KITTENGRID_VCS_PROVIDER"))]
     pub vcs_provider: String,
@@ -196,6 +204,31 @@ mod test {
         args.config.project_vcs_path = Some("123445".to_string());
         let config = process_args(&mut args);
         assert_eq!(config.project_vcs_path, "123445");
+    }
+
+    #[test]
+    fn environment_id_from_cli() {
+        let mut args = Args::parse_from([
+            "kittengrid-agent",
+            "--config",
+            "kittengrid.test.yml",
+            "--environment-id",
+            "7ia79uwdfc4j",
+        ]);
+        let config = process_args(&mut args);
+        assert_eq!(config.environment_id, "7ia79uwdfc4j");
+    }
+
+    #[test]
+    fn environment_id_from_yaml() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("agent.yml");
+        std::fs::write(&path, "environment_id: 7ia79uwdfc4j\nservices: []\n").unwrap();
+        let mut args = Args::parse_from(["kittengrid-agent", "--config", path.to_str().unwrap()]);
+        let config = process_args(&mut args);
+        assert_eq!(config.environment_id, "7ia79uwdfc4j");
+        assert!(config.project_vcs_path.is_empty());
+        assert!(config.pull_request_vcs_id.is_empty());
     }
 
     #[test]
