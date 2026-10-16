@@ -136,7 +136,7 @@ impl KittengridAgent {
     }
 
     /// For now, we just log errors.
-    pub async fn set_status(&self, status: crate::kittengrid_api::PullRequestStatus) {
+    pub async fn set_status(&self, status: crate::kittengrid_api::EnvironmentStatus) {
         if self.api.is_none() {
             return;
         }
@@ -145,7 +145,7 @@ impl KittengridAgent {
             .api
             .as_ref()
             .unwrap()
-            .agents_update_pull_request(status.clone())
+            .agents_update_environment(status.clone())
             .await
         {
             error!("Failed to set status to: {}.", status);
