@@ -6,7 +6,7 @@ async fn environment_id_can_be_supplied_by_cli_environment_or_yaml() {
     for source in ["cli", "environment", "yaml"] {
         let (sender, mut requests) = tokio::sync::mpsc::unbounded_channel();
         let app = Router::new().route(
-            "/api/agents/register",
+            "/api/v1/agents/register",
             post(move |Json(body): Json<Value>| {
                 let sender = sender.clone();
                 async move {

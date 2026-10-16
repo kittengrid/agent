@@ -3,6 +3,16 @@ use serde::Deserialize;
 use std::fmt;
 use uuid::Uuid;
 
+const API_BASE_PATH: &str = "/api/v1";
+
+fn api_endpoint(api_url: &str, path: &str) -> String {
+    format!(
+        "{}{API_BASE_PATH}/{}",
+        api_url.trim_end_matches('/'),
+        path.trim_start_matches('/')
+    )
+}
+
 #[derive(Debug, Clone)]
 pub struct KittengridApi {
     api_url: String,
@@ -67,7 +77,7 @@ pub async fn from_registration(
         );
     }
     let res = client
-        .post(format!("{}/api/agents/register", config.api_url))
+        .post(api_endpoint(&config.api_url, "agents/register"))
         .json(&payload)
         .header("Authorization", format!("Bearer {}", config.api_key))
         .send()
@@ -206,18 +216,13 @@ impl KittengridApi {
         self.config.start_terminal = start_terminal;
     }
 
-    /// Updates runtime status, retaining the old endpoint for legacy CI agents.
+    /// Updates runtime status for either environment or VCS identity.
     pub async fn agents_update_environment(
         &self,
         status: EnvironmentStatus,
     ) -> Result<(), KittengridApiError> {
-        let path = if self.config.environment_id.is_empty() {
-            "api/agents/pull_request"
-        } else {
-            "api/agents/environment"
-        };
         let res = self
-            .put(path)
+            .put("agents/environment")
             .json(&serde_json::json!({
                 "status": status.to_string(),
             }))
@@ -255,7 +260,7 @@ impl KittengridApi {
         if !self.config.last_commit_sha.is_empty() {
             payload["sha"] = serde_json::json!(self.config.last_commit_sha);
         }
-        let res = self.post("api/agents/service").json(&payload).send().await;
+        let res = self.post("agents/service").json(&payload).send().await;
         match res {
             Ok(res) => {
                 if res.status().is_success() {
@@ -272,7 +277,7 @@ impl KittengridApi {
     // It returns a list of peers ready to be configured.
     pub async fn peers_create(&self, bind_port: u16) -> Result<Vec<Peer>, KittengridApiError> {
         let res = self
-            .post("api/peers")
+            .post("peers")
             .json(&serde_json::json!({
                 "bind_port": bind_port
             }))
@@ -320,7 +325,7 @@ impl KittengridApi {
             data["path"] = serde_json::Value::String(path);
         }
 
-        let res = self.post("api/peers/service").json(&data).send().await;
+        let res = self.post("peers/service").json(&data).send().await;
         match res {
             Ok(res) => {
                 if !res.status().is_success() {
@@ -339,7 +344,7 @@ impl KittengridApi {
 
     pub async fn peers_get_endpoint(&self, cidr: String) -> Result<Endpoint, KittengridApiError> {
         let res = self
-            .get(format!("api/peers/endpoint?cidr={}", cidr).as_str())
+            .get(format!("peers/endpoint?cidr={}", cidr).as_str())
             .send()
             .await;
 
@@ -391,7 +396,7 @@ impl KittengridApi {
         }
 
         let res = self
-            .put(&format!("api/services/{}", id))
+            .put(&format!("services/{}", id))
             .json(&serde_json::Value::Object(payload))
             .send()
             .await;
@@ -408,15 +413,15 @@ impl KittengridApi {
     }
 
     pub fn post(&self, path: &str) -> reqwest::RequestBuilder {
-        self.agent_request(self.client.post(format!("{}/{}", self.api_url, path)))
+        self.agent_request(self.client.post(api_endpoint(&self.api_url, path)))
     }
 
     pub fn put(&self, path: &str) -> reqwest::RequestBuilder {
-        self.agent_request(self.client.put(format!("{}/{}", self.api_url, path)))
+        self.agent_request(self.client.put(api_endpoint(&self.api_url, path)))
     }
 
     pub fn get(&self, path: &str) -> reqwest::RequestBuilder {
-        self.agent_request(self.client.get(format!("{}/{}", self.api_url, path)))
+        self.agent_request(self.client.get(api_endpoint(&self.api_url, path)))
     }
 
     fn agent_request(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
@@ -438,12 +443,27 @@ pub async fn process_api_status_error_from_response(res: reqwest::Response) -> K
 mod test {
     use super::*;
 
+    #[test]
+    fn api_endpoints_normalize_slashes_and_preserve_query_parameters() {
+        for origin in ["https://app.example.com", "https://app.example.com/"] {
+            for path in [
+                "peers/endpoint?cidr=10.121.0.0/16",
+                "/peers/endpoint?cidr=10.121.0.0/16",
+            ] {
+                assert_eq!(
+                    api_endpoint(origin, path),
+                    "https://app.example.com/api/v1/peers/endpoint?cidr=10.121.0.0/16"
+                );
+            }
+        }
+    }
+
     async fn registration_server(
         status: axum::http::StatusCode,
         body: &'static str,
     ) -> (Config, tokio::task::JoinHandle<()>) {
         let app = axum::Router::new().route(
-            "/api/agents/register",
+            "/api/v1/agents/register",
             axum::routing::post(move || async move { (status, body) }),
         );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
