@@ -33,9 +33,9 @@ export KITTENGRID_API_KEY='<organization-api-key>'
 kittengrid-agent --environment-id 7ia79uwdfc4j --config kittengrid.yaml
 ```
 
-The environment must already exist and belong to the API key's organization. The agent sends `environment_id` during registration and on subsequent tunnel, service, and runtime-status requests. When configured, it replaces the VCS/PR identity in API requests, even if legacy VCS settings remain in the configuration. Without it, the existing CI registration path is unchanged.
+The environment must already exist and belong to the API key's organization. The agent sends `environment_id` during registration and on subsequent tunnel, service, and runtime-status requests. When configured, it replaces the VCS/PR identity in API requests, even if legacy VCS settings remain in the configuration. Without it, CI registration continues to use VCS/PR identity.
 
-Development environments do not need a repository, PR number, workflow run ID, or commit SHA. Empty SHA values are omitted when publishing services. For a PR preview registered by environment ID, still supply `KITTENGRID_WORKFLOW_RUN_ID` for CI startup authorization and `KITTENGRID_LAST_COMMIT_SHA` for preview-link publication. Runtime updates use `/api/agents/environment` in environment mode; legacy CI mode retains `/api/agents/pull_request`.
+Development environments do not need a repository, PR number, workflow run ID, or commit SHA. Empty SHA values are omitted when publishing services. For a PR preview registered by environment ID, still supply `KITTENGRID_WORKFLOW_RUN_ID` for CI startup authorization and `KITTENGRID_LAST_COMMIT_SHA` for preview-link publication. Both identity modes use `/api/v1/agents/environment` for runtime updates. All backend requests use the `/api/v1` API with API-key authentication. The configured API URL remains the server origin (without `/api/v1`). This requires a backend exposing the versioned API; there is no fallback to unversioned endpoints.
 
 The API's startup instructions are honored as before: development registration requests service startup and no terminal by default. Explicit local startup flags continue to work. This change adds environment identity, not Docker orchestration or expose-only service mode; configured services are still managed processes.
 

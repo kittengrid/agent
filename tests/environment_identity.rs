@@ -41,10 +41,10 @@ async fn api_server() -> (
                 serde_json::from_slice(&bytes).unwrap()
             };
             let response = match path.as_str() {
-                "/api/agents/register" => json!({"start_services": true, "start_terminal": false}),
-                "/api/peers" => json!([]),
-                "/api/peers/service" => json!({"public_url": "https://web.example.test"}),
-                "/api/peers/endpoint" => json!({
+                "/api/v1/agents/register" => json!({"start_services": true, "start_terminal": false}),
+                "/api/v1/peers" => json!([]),
+                "/api/v1/peers/service" => json!({"public_url": "https://web.example.test"}),
+                "/api/v1/peers/endpoint" => json!({
                     "public_url": "192.0.2.1:51820",
                     "address": "10.121.0.1",
                     "public_key": "public-key",
@@ -117,7 +117,7 @@ async fn exercise_api(environment_mode: bool) {
     api.set_startup_options(options.start_services, options.start_terminal);
     let request = requests.recv().await.unwrap();
     assert_eq!(request.method, "POST");
-    assert_eq!(request.path, "/api/agents/register");
+    assert_eq!(request.path, "/api/v1/agents/register");
     assert_eq!(request.authorization, "Bearer organization-key");
     let mut expected_registration = serde_json::to_value(&expected_identity).unwrap();
     if !environment_mode {
@@ -130,14 +130,7 @@ async fn exercise_api(environment_mode: bool) {
         .unwrap();
     let request = requests.recv().await.unwrap();
     assert_eq!(request.method, "PUT");
-    assert_eq!(
-        request.path,
-        if environment_mode {
-            "/api/agents/environment"
-        } else {
-            "/api/agents/pull_request"
-        }
-    );
+    assert_eq!(request.path, "/api/v1/agents/environment");
     assert_eq!(request.query, expected_identity);
     assert_eq!(request.authorization, "Bearer organization-key");
     assert_eq!(request.body, json!({"status": "running"}));
@@ -147,7 +140,7 @@ async fn exercise_api(environment_mode: bool) {
         .await
         .unwrap();
     let request = requests.recv().await.unwrap();
-    assert_eq!(request.path, "/api/agents/service");
+    assert_eq!(request.path, "/api/v1/agents/service");
     assert_eq!(request.query, expected_identity);
     let mut expected_service = json!({"id": id.to_string(), "name": "web", "status": "created"});
     if !environment_mode {
@@ -157,7 +150,7 @@ async fn exercise_api(environment_mode: bool) {
 
     assert!(api.peers_create(3000).await.unwrap().is_empty());
     let request = requests.recv().await.unwrap();
-    assert_eq!(request.path, "/api/peers");
+    assert_eq!(request.path, "/api/v1/peers");
     assert_eq!(request.query, expected_identity);
     assert_eq!(request.body, json!({"bind_port": 3000}));
 
@@ -168,7 +161,7 @@ async fn exercise_api(environment_mode: bool) {
     assert_eq!(endpoint.public_url(), "192.0.2.1:51820");
     let request = requests.recv().await.unwrap();
     assert_eq!(request.method, "GET");
-    assert_eq!(request.path, "/api/peers/endpoint");
+    assert_eq!(request.path, "/api/v1/peers/endpoint");
     let mut endpoint_query = expected_identity.clone();
     endpoint_query.insert("cidr".to_string(), "10.121.0.0/16".to_string());
     assert_eq!(request.query, endpoint_query);
@@ -179,7 +172,7 @@ async fn exercise_api(environment_mode: bool) {
         .unwrap();
     assert_eq!(url, "https://web.example.test");
     let request = requests.recv().await.unwrap();
-    assert_eq!(request.path, "/api/peers/service");
+    assert_eq!(request.path, "/api/v1/peers/service");
     assert_eq!(request.query, expected_identity);
     assert_eq!(request.body["publish"], true);
 
@@ -188,7 +181,7 @@ async fn exercise_api(environment_mode: bool) {
         .unwrap();
     let request = requests.recv().await.unwrap();
     assert_eq!(request.method, "PUT");
-    assert_eq!(request.path, format!("/api/services/{id}"));
+    assert_eq!(request.path, format!("/api/v1/services/{id}"));
     assert_eq!(request.query, expected_identity);
     assert_eq!(request.body, json!({"status": "running"}));
     server.abort();
