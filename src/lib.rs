@@ -4,6 +4,7 @@ use std::fmt;
 use std::sync::Arc;
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 mod api_error;
+mod authn;
 mod binary_utils;
 pub mod config;
 pub mod data_dir;

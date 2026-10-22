@@ -34,6 +34,7 @@ async fn environment_id_can_be_supplied_by_cli_environment_or_yaml() {
             .env_clear()
             .args([
                 "--no-global-config",
+                "--no-auth-file",
                 "--config",
                 path.to_str().unwrap(),
                 "--api-url",

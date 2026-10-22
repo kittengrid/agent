@@ -24,6 +24,8 @@ enum ConfigError {
     },
     #[error("Global configuration file '{}' cannot define services; put services in the project configuration instead", .0.display())]
     GlobalServices(PathBuf),
+    #[error(transparent)]
+    Authentication(#[from] crate::authn::AuthError),
 }
 
 // Returns a reference to a lazily created Config object.
@@ -35,6 +37,7 @@ static CONFIG: Lazy<Config> = Lazy::new(|| {
         args = Args::parse_from([
             "kittengrid-agent",
             "--no-global-config",
+            "--no-auth-file",
             "--config",
             "kittengrid.test.yml",
         ]);
@@ -49,8 +52,12 @@ static CONFIG: Lazy<Config> = Lazy::new(|| {
     })
 });
 
+fn configuration_directory() -> Option<PathBuf> {
+    dirs::config_dir().map(|directory| directory.join("kittengrid-agent"))
+}
+
 fn default_global_config_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|directory| directory.join("kittengrid-agent/config.yaml"))
+    configuration_directory().map(|directory| directory.join("config.yaml"))
 }
 
 fn read_config(
@@ -110,7 +117,16 @@ fn process_args(args: &mut Args) -> Result<Config, ConfigError> {
     // Clap resolves flags over environment variables. Only supplied options
     // override the file layers, so explicit false and zero values are retained.
     config.update(&mut args.config);
+    let explicit_auth_file = !config.auth_file.as_os_str().is_empty();
     config.set_defaults_if_missing();
+
+    // Saved credentials are a fallback, never an override of explicitly
+    // configured keys. An unused auth file is not opened or validated.
+    if !args.no_auth_file && config.api_key.is_empty() && !config.auth_file.as_os_str().is_empty() {
+        if let Some(api_key) = crate::authn::load_api_key(&config.auth_file, explicit_auth_file)? {
+            config.api_key = api_key;
+        }
+    }
     Ok(config)
 }
 
@@ -134,6 +150,10 @@ pub struct Args {
     #[arg(long)]
     no_global_config: bool,
 
+    /// Ignore saved credentials, including an explicitly selected authentication file.
+    #[arg(long)]
+    no_auth_file: bool,
+
     /// Rest of arguments
     #[clap(flatten)]
     pub config: <Config as ClapSerde>::Opt,
@@ -149,6 +169,11 @@ impl Config {
         }
         if self.bind_address.is_empty() {
             self.bind_address = "0.0.0.0".to_string();
+        }
+        if self.auth_file.as_os_str().is_empty() {
+            self.auth_file = configuration_directory()
+                .map(|directory| directory.join("authn.json"))
+                .unwrap_or_default();
         }
         self
     }
@@ -180,6 +205,10 @@ pub struct Config {
 
     #[arg(long, env("KITTENGRID_API_URL"))]
     pub api_url: String,
+
+    /// Saved authentication JSON (defaults to the platform config directory's authn.json).
+    #[arg(long, env("KITTENGRID_AUTH_FILE"))]
+    pub auth_file: PathBuf,
 
     /// Existing environment's public ID. When set, replaces the VCS/PR identity.
     #[arg(long, env("KITTENGRID_ENVIRONMENT_ID"))]
@@ -229,6 +258,7 @@ impl fmt::Debug for Config {
                 },
             )
             .field("api_url", &self.api_url)
+            .field("auth_file", &self.auth_file)
             .field("environment_id", &self.environment_id)
             .field("vcs_provider", &self.vcs_provider)
             .field("pull_request_vcs_id", &self.pull_request_vcs_id)
@@ -294,6 +324,7 @@ mod test {
             config_path: Some("kittengrid.test.yml".into()),
             global_config_path: None,
             no_global_config: true,
+            no_auth_file: true,
             config: <Config as ClapSerde>::Opt::default(),
         }
     }
@@ -365,6 +396,7 @@ mod test {
         let mut args = Args::parse_from([
             "kittengrid-agent",
             "--no-global-config",
+            "--no-auth-file",
             "--config",
             "kittengrid.test.yml",
             "--environment-id",
@@ -382,6 +414,7 @@ mod test {
         let mut args = Args::parse_from([
             "kittengrid-agent",
             "--no-global-config",
+            "--no-auth-file",
             "--config",
             path.to_str().unwrap(),
         ]);
@@ -434,6 +467,7 @@ mod test {
         let mut args = Args::parse_from([
             "kittengrid-agent",
             "--no-global-config",
+            "--no-auth-file",
             "--config",
             project.to_str().unwrap(),
             "--start-services",

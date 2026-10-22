@@ -27,6 +27,7 @@ async fn run_agent(status: StatusCode) -> (std::process::Output, usize) {
             .env_clear()
             .args([
                 "--no-global-config",
+                "--no-auth-file",
                 "--config",
                 config.to_str().unwrap(),
                 "--api-url",

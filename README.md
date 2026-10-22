@@ -55,7 +55,7 @@ From highest to lowest priority:
 command-line flags > environment variables > project YAML > global YAML > built-in defaults
 ```
 
-Only supplied values override a lower layer. Explicit `false` and `0` values are preserved; missing fields and YAML `null` inherit from lower layers. Global settings do not change the process's working directory or where the project file is discovered.
+Only supplied values override a lower layer. Explicit `false` and `0` values are preserved; missing fields and YAML `null` inherit from lower layers. Global settings do not change the process's working directory or where the project file is discovered. If the resulting `api_key` is empty, the agent additionally checks the separate saved authentication file described below.
 
 ## Global Settings
 
@@ -86,7 +86,35 @@ kittengrid-agent --global-config /path/to/global.yaml --config ./kittengrid.yaml
 
 `--no-global-config` disables global settings entirely, including a file selected through `--global-config` or `KITTENGRID_GLOBAL_CONFIG`. This is useful for isolated CI jobs. A missing automatically discovered global file is normal and ignored; an explicitly selected missing file, unreadable file, or malformed YAML fails before any API requests or service startup. Empty files are empty settings layers. The agent does not create or rewrite this file. Settings are read once at startup; edits apply to subsequent runs.
 
-An existing `api_key` setting can also be supplied globally, but then applies to all projects unless overridden. Treat any file containing secrets as private (`chmod 600` on Unix), never commit it, and take care when projects target different backends. Startup configuration dumps redact `api_key` and every service `env` value, while keeping other settings and environment-variable names visible. Command/argument strings are logged as provided, so use environment variables rather than command arguments for service secrets. OAuth login, access-token settings, and managed credential storage are separate work, not part of this configuration change.
+An existing `api_key` setting can also be supplied globally, but then applies to all projects unless overridden. Treat any file containing secrets as private (`chmod 600` on Unix), never commit it, and take care when projects target different backends. Startup configuration dumps redact `api_key` and every service `env` value, while keeping other settings and environment-variable names visible. Command/argument strings are logged as provided, so use environment variables rather than command arguments for service secrets. Prefer the separate `authn.json` file below for saved API keys. OAuth login, access tokens, refresh, and automatic credential writing are not implemented yet.
+
+## Saved Authentication (`authn.json`)
+
+The agent can read a saved API key from `authn.json` in the same **default platform directory** as global settings (on Linux, `$XDG_CONFIG_HOME/kittengrid-agent/authn.json`, falling back to `~/.config/kittengrid-agent/authn.json`). Selecting a different global YAML file does not relocate it.
+
+Create a private file containing:
+
+```json
+{
+  "api_key": "<organization-api-key>"
+}
+```
+
+The file stores a single API key, with no endpoint selection or binding. The saved key applies to whichever `api_url` is configured through flags, environment, or YAML. When switching backends for development, supply the appropriate key explicitly or use a separate `--auth-file`.
+
+Credential priority is:
+
+```text
+--api-key > KITTENGRID_API_KEY > project YAML api_key > global YAML api_key > authn.json api_key
+```
+
+A nonempty configured key wins; in that case the saved file is not opened or validated, even if explicitly selected. An empty configured key allows the saved-key fallback.
+
+Use `--auth-file PATH`, `KITTENGRID_AUTH_FILE`, or the YAML `auth_file: /path/to/authn.json` setting to select another file. The path follows the normal settings hierarchy; relative paths are resolved from the process's working directory. `--no-auth-file` disables saved credentials, including an explicitly selected file. `--no-global-config` only disables global YAML, **not** saved authentication; use both flags for complete global-file isolation in CI.
+
+A missing discovered authentication file is optional. When saved credentials are needed, an explicitly selected missing file, unreadable file, invalid JSON, unsupported/missing fields, or invalid key fails before registration. Empty files are invalid, unlike empty YAML settings layers. Errors report the file and location without echoing JSON values or credentials.
+
+On Unix, the file must have no group/other permissions: run `chmod 600 /path/to/authn.json` (read-only `0400` also works). Keep its parent directory private. On Windows, protect the file with your user account's ACLs; the agent does not validate Windows ACLs. This is plaintext secret storage: never commit it. The agent only reads this file at startup; it does not create, rewrite, or change permissions on it. The saved key uses the existing redacted configuration logging.
 
 ## Project Settings
 
@@ -203,5 +231,6 @@ services:
 | --- | --- | --- | --- |
 | Global settings | `--global-config PATH` | `KITTENGRID_GLOBAL_CONFIG` | Platform config directory + `kittengrid-agent/config.yaml` |
 | Project settings/services | `--config PATH` / `-c PATH` | `KITTENGRID_CONFIG_PATH` | `./kittengrid.yml`, then `./kittengrid.yaml` |
+| Saved authentication | `--auth-file PATH` | `KITTENGRID_AUTH_FILE` | Platform config directory + `kittengrid-agent/authn.json` |
 
-Use `--no-global-config` to opt out of the global layer. Both file layers are YAML; file paths themselves are selected through flags/environment, not fields inside another YAML file.
+Use `--no-global-config` to opt out of global YAML and `--no-auth-file` to opt out of saved authentication. Settings-file paths are selected through flags/environment, not fields inside another YAML file. The separate JSON authentication file's path can also be configured with the YAML `auth_file` setting.

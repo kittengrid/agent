@@ -30,6 +30,7 @@ async fn run_agent(
         .env_clear()
         .args([
             "--no-global-config",
+            "--no-auth-file",
             "--api-url",
             &api_url,
             "--bind-address",
