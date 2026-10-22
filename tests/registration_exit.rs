@@ -25,7 +25,13 @@ async fn run_agent(status: StatusCode) -> (std::process::Output, usize) {
         tokio::process::Command::new(env!("CARGO_BIN_EXE_kittengrid-agent"))
             .current_dir(directory.path())
             .env_clear()
-            .args(["--config", config.to_str().unwrap(), "--api-url", &api_url])
+            .args([
+                "--no-global-config",
+                "--config",
+                config.to_str().unwrap(),
+                "--api-url",
+                &api_url,
+            ])
             .args(["--bind-address", "127.0.0.1", "--bind-port", "0"])
             .args(["--start-services", "true", "--start-terminal", "true"])
             .kill_on_drop(true)

@@ -45,9 +45,52 @@ If the registration API returns HTTP `409 Conflict`, the PR/MR is no longer open
 
 # KittenGrid Agent Configuration
 
-The KittenGrid agent uses a YAML configuration file to define services that should be managed. By default, the agent looks for `kittengrid.yml` or `kittengrid.yaml` in the current directory.
+The agent loads optional global settings and a project YAML file, then applies environment variables and command-line flags.
 
-Use `--config path/to/config.yml` to select a file explicitly. If the selected file cannot be opened, the agent prints the path and error and exits with code `1` before registration or service startup; it does not fall back to defaults or another file. When `--config` is omitted and neither default file exists, CLI/environment-only configuration remains supported.
+## Settings Precedence
+
+From highest to lowest priority:
+
+```text
+command-line flags > environment variables > project YAML > global YAML > built-in defaults
+```
+
+Only supplied values override a lower layer. Explicit `false` and `0` values are preserved; missing fields and YAML `null` inherit from lower layers. Global settings do not change the process's working directory or where the project file is discovered.
+
+## Global Settings
+
+Default location:
+
+| Platform | Global settings file |
+| --- | --- |
+| Linux | `$XDG_CONFIG_HOME/kittengrid-agent/config.yaml`, or `~/.config/kittengrid-agent/config.yaml` when XDG_CONFIG_HOME is unset, empty, or relative |
+| macOS | `~/Library/Application Support/kittengrid-agent/config.yaml` |
+| Windows | `%APPDATA%\\kittengrid-agent\\config.yaml` (the platform roaming configuration directory) |
+
+Example `~/.config/kittengrid-agent/config.yaml`:
+
+```yaml
+api_url: https://app.kittengrid.com
+log_level: info
+show_services_output: false
+```
+
+Use the same top-level setting names as the project file: API, logging, bind/work-directory, and environment/VCS/CI settings all retain their corresponding flags and `KITTENGRID_*` environment variables. **Service definitions belong in the project file**; a global `services` list is rejected rather than accidentally starting processes in every project.
+
+Select another global file with:
+
+```bash
+kittengrid-agent --global-config /path/to/global.yaml --config ./kittengrid.yaml
+# Or select it through KITTENGRID_GLOBAL_CONFIG=/path/to/global.yaml
+```
+
+`--no-global-config` disables global settings entirely, including a file selected through `--global-config` or `KITTENGRID_GLOBAL_CONFIG`. This is useful for isolated CI jobs. A missing automatically discovered global file is normal and ignored; an explicitly selected missing file, unreadable file, or malformed YAML fails before any API requests or service startup. Empty files are empty settings layers. The agent does not create or rewrite this file. Settings are read once at startup; edits apply to subsequent runs.
+
+An existing `api_key` setting can also be supplied globally, but then applies to all projects unless overridden. Treat any file containing secrets as private (`chmod 600` on Unix), never commit it, and take care when projects target different backends. Startup configuration dumps redact `api_key` and every service `env` value, while keeping other settings and environment-variable names visible. Command/argument strings are logged as provided, so use environment variables rather than command arguments for service secrets. OAuth login, access-token settings, and managed credential storage are separate work, not part of this configuration change.
+
+## Project Settings
+
+By default, the agent looks for `kittengrid.yml` and then `kittengrid.yaml` in the current directory, using only the first file found. Use `--config path/to/config.yml` or `KITTENGRID_CONFIG_PATH` to select it explicitly; the flag takes priority over the environment variable. A selected file that cannot be opened or parsed produces a path-specific error and exits with code `1` before registration or service startup, without falling back to another file. When neither project default exists, global/CLI/environment-only configuration remains supported.
 
 ## Configuration File Structure
 
@@ -154,11 +197,11 @@ services:
 - If `env` is not specified, the service inherits the agent's environment
 - Services without health checks will not be monitored for health status
 
-## File Location
+## File Selection Summary
 
-The configuration file can be specified using:
-- Command line: `--config /path/to/config.yml`
-- Environment variable: `KITTENGRID_CONFIG_PATH`
-- Default: `kittengrid.yml` in the current directory
+| Layer | Flag | Environment variable | Default |
+| --- | --- | --- | --- |
+| Global settings | `--global-config PATH` | `KITTENGRID_GLOBAL_CONFIG` | Platform config directory + `kittengrid-agent/config.yaml` |
+| Project settings/services | `--config PATH` / `-c PATH` | `KITTENGRID_CONFIG_PATH` | `./kittengrid.yml`, then `./kittengrid.yaml` |
 
-The agent will also accept `kittengrid.yaml` as an alternative file extension.
+Use `--no-global-config` to opt out of the global layer. Both file layers are YAML; file paths themselves are selected through flags/environment, not fields inside another YAML file.

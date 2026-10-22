@@ -29,6 +29,7 @@ async fn run_agent(
         .current_dir(directory.path())
         .env_clear()
         .args([
+            "--no-global-config",
             "--api-url",
             &api_url,
             "--bind-address",
