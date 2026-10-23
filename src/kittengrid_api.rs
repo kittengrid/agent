@@ -19,6 +19,7 @@ pub struct KittengridApi {
     client: reqwest::Client,
     config: Config,
     registration_id: Uuid,
+    expose_only: bool,
     replaced: tokio_util::sync::CancellationToken,
 }
 
@@ -80,6 +81,19 @@ fn agent_identity(config: &Config) -> Vec<(&'static str, &str)> {
 pub async fn from_registration(
     config: &Config,
 ) -> Result<(KittengridApi, StartupOptions), KittengridApiError> {
+    register(config, false).await
+}
+
+pub async fn from_development_registration(
+    config: &Config,
+) -> Result<(KittengridApi, StartupOptions), KittengridApiError> {
+    register(config, true).await
+}
+
+async fn register(
+    config: &Config,
+    development: bool,
+) -> Result<(KittengridApi, StartupOptions), KittengridApiError> {
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .build()?;
@@ -90,6 +104,9 @@ pub async fn from_registration(
         .into_iter()
         .map(|(key, value)| (key.to_string(), serde_json::json!(value)))
         .collect();
+    if development {
+        payload.insert("inactivity_timeout".into(), serde_json::json!(0));
+    }
     if !config.workflow_run_id.is_empty() {
         payload.insert(
             "workflow_run_id".to_string(),
@@ -116,6 +133,7 @@ pub async fn from_registration(
                         api_url: config.api_url.clone(),
                         client,
                         registration_id: registration.registration_id,
+                        expose_only: false,
                         replaced: tokio_util::sync::CancellationToken::new(),
                     },
                     registration.startup,
@@ -263,6 +281,10 @@ impl KittengridApi {
         }
     }
 
+    pub fn set_expose_only(&mut self, value: bool) {
+        self.expose_only = value;
+    }
+
     pub fn set_startup_options(&mut self, start_services: bool, start_terminal: bool) {
         self.config.start_services = start_services;
         self.config.start_terminal = start_terminal;
@@ -299,7 +321,9 @@ impl KittengridApi {
         id: Uuid,
         name: String,
     ) -> Result<(), KittengridApiError> {
-        let status = if self.config.start_services {
+        let status = if self.expose_only {
+            ServiceStatus::Running
+        } else if self.config.start_services {
             ServiceStatus::Created
         } else {
             ServiceStatus::Stopped
@@ -374,7 +398,7 @@ impl KittengridApi {
             "port": port,
             "name": name,
             "websocket": websocket,
-            "publish": self.config.start_services,
+            "publish": self.config.start_services || self.expose_only,
         });
 
         if let Some(healthcheck_path) = healthcheck_path {

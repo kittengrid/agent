@@ -9,12 +9,17 @@ mod binary_utils;
 pub mod config;
 mod credential_provider;
 pub mod data_dir;
+pub mod dev;
+pub mod development;
 mod endpoints;
+mod exposure;
 pub mod kittengrid_api;
 pub mod login;
 mod oauth;
 pub mod process_controller;
+pub mod repository;
 pub mod utils;
+mod workspaces;
 use axum::{
     routing::{get, post},
     Router,
@@ -65,6 +70,8 @@ pub struct AxumState {
     services: Arc<crate::service::Services>,
     capabilities: Capabilities,
     registration_id: Option<uuid::Uuid>,
+    managed_services: bool,
+    shutdown: Option<tokio_util::sync::CancellationToken>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
@@ -123,11 +130,15 @@ pub async fn launch(
     services: Arc<crate::service::Services>,
     capabilities: Capabilities,
     registration_id: Option<uuid::Uuid>,
+    managed_services: bool,
+    shutdown: Option<tokio_util::sync::CancellationToken>,
 ) {
     let state = AxumState {
         services,
         capabilities,
         registration_id,
+        managed_services,
+        shutdown,
     };
     axum::serve(
         listener,
