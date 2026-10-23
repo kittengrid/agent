@@ -1,7 +1,12 @@
-// GET /sys/shutdown
+// POST /sys/shutdown
 //
 // Description: Shuts down the server
-use axum::{extract::State, Json};
+use axum::{
+    extract::State,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    Json,
+};
 use axum_extra::extract::WithRejection;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -11,13 +16,21 @@ use crate::AxumState;
 #[derive(Deserialize)]
 pub struct ShutdownParams {
     message: String,
+    registration_id: Option<uuid::Uuid>,
 }
 
 #[axum::debug_handler]
 pub async fn shutdown(
     State(state): State<Arc<AxumState>>,
     params: WithRejection<Json<ShutdownParams>, crate::api_error::ApiError>,
-) -> &'static str {
+) -> Response {
+    if params.0.registration_id != state.registration_id {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({"code":"agent_replaced"})),
+        )
+            .into_response();
+    }
     log::info!("Shutting down: {}", params.0.message);
     tokio::spawn(async move {
         if let Err(error) = state.services.stop().await {
@@ -27,7 +40,7 @@ pub async fn shutdown(
         std::process::exit(0);
     });
 
-    "{}"
+    Json(serde_json::json!({})).into_response()
 }
 
 // GET /sys/hello
@@ -42,6 +55,30 @@ mod test {
     use crate::test_utils::*;
     use axum::http::StatusCode;
     use serde_json::json;
+
+    #[tokio::test]
+    async fn stale_or_missing_shutdown_ids_cannot_stop_a_registered_agent() {
+        use tower::ServiceExt;
+        let current = uuid::Uuid::new_v4();
+        let app = crate::router(crate::AxumState {
+            services: std::sync::Arc::new(Default::default()),
+            capabilities: Default::default(),
+            registration_id: Some(current),
+        });
+        for payload in [
+            json!({"message":"old shutdown"}),
+            json!({"message":"old shutdown", "registration_id":uuid::Uuid::new_v4()}),
+        ] {
+            let request = axum::http::Request::builder()
+                .method("POST")
+                .uri("/sys/shutdown")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(payload.to_string()))
+                .unwrap();
+            let response = app.clone().oneshot(request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::CONFLICT);
+        }
+    }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     async fn hello() {

@@ -62,8 +62,8 @@ impl KittengridAgent {
         }
     }
 
-    /// Registers the agent with the Kittengrid API. Subsequent requests use
-    /// the configured organization API key.
+    /// Registers using the configured credentials. Subsequent requests carry
+    /// the server-assigned registration ID as well as bearer authentication.
     pub async fn register(
         &mut self,
     ) -> Result<crate::kittengrid_api::StartupOptions, crate::kittengrid_api::KittengridApiError>
@@ -282,11 +282,42 @@ impl KittengridAgent {
     }
 
     pub async fn wait(&self, listener: tokio::net::TcpListener) {
-        crate::launch(
+        let server = crate::launch(
             listener,
             Arc::clone(&self.services),
             self.capabilities.clone(),
-        )
-        .await;
+            self.api.as_ref().map(|api| api.registration_id()),
+        );
+        if let Some(api) = &self.api {
+            let replacement = api.replacement_token();
+            let monitor = async {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                loop {
+                    tokio::select! {
+                        _ = replacement.cancelled() => break,
+                        _ = interval.tick() => {},
+                    }
+                    let result = tokio::select! {
+                        _ = replacement.cancelled() => break,
+                        result = api.heartbeat() => result,
+                    };
+                    match result {
+                        Err(crate::kittengrid_api::KittengridApiError::AgentReplaced) => break,
+                        Err(error) => log::warn!("Agent heartbeat failed: {}", error),
+                        Ok(()) => {}
+                    }
+                }
+            };
+            tokio::select! {
+                _ = server => {},
+                _ = monitor => {
+                    info!("Agent replaced; stopping managed services and exiting.");
+                    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), self.services.stop()).await;
+                }
+            }
+        } else {
+            server.await;
+        }
     }
 }

@@ -41,7 +41,7 @@ async fn api_server() -> (
                 serde_json::from_slice(&bytes).unwrap()
             };
             let response = match path.as_str() {
-                "/api/v1/agents/register" => json!({"start_services": true, "start_terminal": false}),
+                "/api/v1/agents/register" => json!({"start_services": true, "start_terminal": false, "registration_id": "5c7bbfe8-a6b1-4f48-aeb8-72d25dcc2399"}),
                 "/api/v1/peers" => json!([]),
                 "/api/v1/peers/service" => json!({"public_url": "https://web.example.test"}),
                 "/api/v1/peers/endpoint" => json!({
@@ -124,6 +124,8 @@ async fn exercise_api(environment_mode: bool) {
         expected_registration["workflow_run_id"] = json!("123");
     }
     assert_eq!(request.body, expected_registration);
+    let mut expected_identity = expected_identity;
+    expected_identity.insert("registration_id".into(), api.registration_id().to_string());
 
     api.agents_update_environment(EnvironmentStatus::Running)
         .await
@@ -184,6 +186,10 @@ async fn exercise_api(environment_mode: bool) {
     assert_eq!(request.path, format!("/api/v1/services/{id}"));
     assert_eq!(request.query, expected_identity);
     assert_eq!(request.body, json!({"status": "running"}));
+    api.heartbeat().await.unwrap();
+    let request = requests.recv().await.unwrap();
+    assert_eq!(request.path, "/api/v1/agents/heartbeat");
+    assert_eq!(request.query, expected_identity);
     server.abort();
 }
 
