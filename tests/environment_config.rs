@@ -32,7 +32,14 @@ async fn environment_id_can_be_supplied_by_cli_environment_or_yaml() {
         command
             .current_dir(directory.path())
             .env_clear()
-            .args(["--config", path.to_str().unwrap(), "--api-url", &api_url])
+            .args([
+                "--no-global-config",
+                "--no-auth-file",
+                "--config",
+                path.to_str().unwrap(),
+                "--api-url",
+                &api_url,
+            ])
             .kill_on_drop(true);
         match source {
             "cli" => {

@@ -30,6 +30,9 @@ pub enum KittengridApiError {
     #[error("Request failed: {0}")]
     RequestError(#[from] reqwest::Error),
 
+    #[error("Authentication failed: {0}")]
+    AuthenticationError(String),
+
     #[error("Unauthorized: {0}")]
     UnauthorizedError(String),
 
@@ -65,7 +68,12 @@ fn agent_identity(config: &Config) -> Vec<(&'static str, &str)> {
 pub async fn from_registration(
     config: &Config,
 ) -> Result<(KittengridApi, StartupOptions), KittengridApiError> {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?;
+    let bearer = crate::credential_provider::bearer(config)
+        .await
+        .map_err(|error| KittengridApiError::AuthenticationError(error.to_string()))?;
     let mut payload: serde_json::Map<String, serde_json::Value> = agent_identity(config)
         .into_iter()
         .map(|(key, value)| (key.to_string(), serde_json::json!(value)))
@@ -79,7 +87,7 @@ pub async fn from_registration(
     let res = client
         .post(api_endpoint(&config.api_url, "agents/register"))
         .json(&payload)
-        .header("Authorization", format!("Bearer {}", config.api_key))
+        .bearer_auth(bearer)
         .send()
         .await;
 
@@ -223,6 +231,7 @@ impl KittengridApi {
     ) -> Result<(), KittengridApiError> {
         let res = self
             .put("agents/environment")
+            .await?
             .json(&serde_json::json!({
                 "status": status.to_string(),
             }))
@@ -260,7 +269,12 @@ impl KittengridApi {
         if !self.config.last_commit_sha.is_empty() {
             payload["sha"] = serde_json::json!(self.config.last_commit_sha);
         }
-        let res = self.post("agents/service").json(&payload).send().await;
+        let res = self
+            .post("agents/service")
+            .await?
+            .json(&payload)
+            .send()
+            .await;
         match res {
             Ok(res) => {
                 if res.status().is_success() {
@@ -278,6 +292,7 @@ impl KittengridApi {
     pub async fn peers_create(&self, bind_port: u16) -> Result<Vec<Peer>, KittengridApiError> {
         let res = self
             .post("peers")
+            .await?
             .json(&serde_json::json!({
                 "bind_port": bind_port
             }))
@@ -325,7 +340,7 @@ impl KittengridApi {
             data["path"] = serde_json::Value::String(path);
         }
 
-        let res = self.post("peers/service").json(&data).send().await;
+        let res = self.post("peers/service").await?.json(&data).send().await;
         match res {
             Ok(res) => {
                 if !res.status().is_success() {
@@ -345,6 +360,7 @@ impl KittengridApi {
     pub async fn peers_get_endpoint(&self, cidr: String) -> Result<Endpoint, KittengridApiError> {
         let res = self
             .get(format!("peers/endpoint?cidr={}", cidr).as_str())
+            .await?
             .send()
             .await;
 
@@ -397,6 +413,7 @@ impl KittengridApi {
 
         let res = self
             .put(&format!("services/{}", id))
+            .await?
             .json(&serde_json::Value::Object(payload))
             .send()
             .await;
@@ -412,22 +429,31 @@ impl KittengridApi {
         }
     }
 
-    pub fn post(&self, path: &str) -> reqwest::RequestBuilder {
+    pub async fn post(&self, path: &str) -> Result<reqwest::RequestBuilder, KittengridApiError> {
         self.agent_request(self.client.post(api_endpoint(&self.api_url, path)))
+            .await
     }
 
-    pub fn put(&self, path: &str) -> reqwest::RequestBuilder {
+    pub async fn put(&self, path: &str) -> Result<reqwest::RequestBuilder, KittengridApiError> {
         self.agent_request(self.client.put(api_endpoint(&self.api_url, path)))
+            .await
     }
 
-    pub fn get(&self, path: &str) -> reqwest::RequestBuilder {
+    pub async fn get(&self, path: &str) -> Result<reqwest::RequestBuilder, KittengridApiError> {
         self.agent_request(self.client.get(api_endpoint(&self.api_url, path)))
+            .await
     }
 
-    fn agent_request(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        request
-            .header("Authorization", format!("Bearer {}", self.config.api_key))
-            .query(&agent_identity(&self.config))
+    async fn agent_request(
+        &self,
+        request: reqwest::RequestBuilder,
+    ) -> Result<reqwest::RequestBuilder, KittengridApiError> {
+        let bearer = crate::credential_provider::bearer(&self.config)
+            .await
+            .map_err(|error| KittengridApiError::AuthenticationError(error.to_string()))?;
+        Ok(request
+            .bearer_auth(bearer)
+            .query(&agent_identity(&self.config)))
     }
 }
 

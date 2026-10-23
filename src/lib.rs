@@ -4,11 +4,15 @@ use std::fmt;
 use std::sync::Arc;
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 mod api_error;
+mod authn;
 mod binary_utils;
 pub mod config;
+mod credential_provider;
 pub mod data_dir;
 mod endpoints;
 pub mod kittengrid_api;
+pub mod login;
+mod oauth;
 pub mod process_controller;
 pub mod utils;
 use axum::{
