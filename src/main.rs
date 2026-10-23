@@ -5,6 +5,13 @@ use std::process::exit;
 #[tokio::main(flavor = "multi_thread", worker_threads = 20)]
 async fn main() {
     let config = lib::config::get_config();
+    if let Some(lib::config::Command::Login(options)) = lib::config::get_command() {
+        if let Err(error) = lib::login::run(config, options).await {
+            eprintln!("Login failed: {error}");
+            exit(1);
+        }
+        return;
+    }
     let mut agent = KittengridAgent::new(config.clone());
 
     // Log initialization

@@ -18,6 +18,13 @@ This is usually ran automatically using the kittengrid/action GitHub Action.
 - **Command-line arguments**: Allows passing command-line arguments to services.
 - **Automatic shutdown**: Based on a timeout of inactivity, the agent will automatically shut down services after a period of inactivity.
 
+# Authentication
+
+The agent can authenticate with either an organization API key or a user OAuth token.
+
+- **API key:** Use an API key for CI, shared environments, and other unattended or organization-level workloads. Supply it with `--api-key`, `KITTENGRID_API_KEY`, or configuration as described below. Keep API keys in your CI secret store and avoid committing them.
+- **OAuth token:** For a local developer environment, run `kittengrid-agent login` to authorize with your user account. The login command obtains and saves an OAuth session so subsequent local agent runs can authenticate without an API key. Login options and saved-credential behavior are described below.
+
 ## Registering an existing environment
 
 Set the environment's **public ID** (not its database ID) using one of:
@@ -86,7 +93,7 @@ kittengrid-agent --global-config /path/to/global.yaml --config ./kittengrid.yaml
 
 `--no-global-config` disables global settings entirely, including a file selected through `--global-config` or `KITTENGRID_GLOBAL_CONFIG`. This is useful for isolated CI jobs. A missing automatically discovered global file is normal and ignored; an explicitly selected missing file, unreadable file, or malformed YAML fails before any API requests or service startup. Empty files are empty settings layers. The agent does not create or rewrite this file. Settings are read once at startup; edits apply to subsequent runs.
 
-An existing `api_key` setting can also be supplied globally, but then applies to all projects unless overridden. Treat any file containing secrets as private (`chmod 600` on Unix), never commit it, and take care when projects target different backends. Startup configuration dumps redact `api_key` and every service `env` value, while keeping other settings and environment-variable names visible. Command/argument strings are logged as provided, so use environment variables rather than command arguments for service secrets. Prefer the separate `authn.json` file below for saved API keys. OAuth login, access tokens, refresh, and automatic credential writing are not implemented yet.
+An existing `api_key` setting can also be supplied globally, but then applies to all projects unless overridden. Treat any file containing secrets as private (`chmod 600` on Unix), never commit it, and take care when projects target different backends. Startup configuration dumps redact `api_key` and every service `env` value, while keeping other settings and environment-variable names visible. Command/argument strings are logged as provided, so use environment variables rather than command arguments for service secrets. Prefer the separate `authn.json` file below for saved API keys. OAuth login and rotating refresh-token persistence are supported as described below.
 
 ## Saved Authentication (`authn.json`)
 
@@ -100,12 +107,12 @@ Create a private file containing:
 }
 ```
 
-The file stores a single API key, with no endpoint selection or binding. The saved key applies to whichever `api_url` is configured through flags, environment, or YAML. When switching backends for development, supply the appropriate key explicitly or use a separate `--auth-file`.
+The file stores one active credential (an API key or OAuth login), with no endpoint selection or binding. Saved credentials apply to whichever `api_url` is configured through flags, environment, or YAML. When switching backends for development, supply the appropriate credentials explicitly or use a separate `--auth-file`.
 
 Credential priority is:
 
 ```text
---api-key > KITTENGRID_API_KEY > project YAML api_key > global YAML api_key > authn.json api_key
+--api-key > KITTENGRID_API_KEY > project YAML api_key > global YAML api_key > authn.json api_key > authn.json OAuth
 ```
 
 A nonempty configured key wins; in that case the saved file is not opened or validated, even if explicitly selected. An empty configured key allows the saved-key fallback.
@@ -114,7 +121,31 @@ Use `--auth-file PATH`, `KITTENGRID_AUTH_FILE`, or the YAML `auth_file: /path/to
 
 A missing discovered authentication file is optional. When saved credentials are needed, an explicitly selected missing file, unreadable file, invalid JSON, unsupported/missing fields, or invalid key fails before registration. Empty files are invalid, unlike empty YAML settings layers. Errors report the file and location without echoing JSON values or credentials.
 
-On Unix, the file must have no group/other permissions: run `chmod 600 /path/to/authn.json` (read-only `0400` also works). Keep its parent directory private. On Windows, protect the file with your user account's ACLs; the agent does not validate Windows ACLs. This is plaintext secret storage: never commit it. The agent only reads this file at startup; it does not create, rewrite, or change permissions on it. The saved key uses the existing redacted configuration logging.
+On Unix, the file must have no group/other permissions: run `chmod 600 /path/to/authn.json` (read-only `0400` also works). Keep its parent directory private. On Windows, protect the file with your user account's ACLs; the agent does not validate Windows ACLs. This is plaintext secret storage: never commit it. API-key files are read without rewriting them. OAuth login replaces the saved credential with an OAuth session, and refresh updates that session atomically using a private file. Configuration logging never includes saved OAuth secrets; API keys remain redacted.
+
+## User Login
+
+```bash
+kittengrid-agent login                  # Open the default OS browser + localhost callback
+kittengrid-agent login --no-browser     # Print the URL; still receive a localhost callback
+kittengrid-agent login --manual         # Print the URL; paste the browser's JSON handoff
+```
+
+`--manual` never opens a browser or starts a localhost server, and can be combined with `--no-browser`. Use it when the browser runs on a different machine from the terminal. `--no-browser` alone still requires the browser to reach the agent's temporary `127.0.0.1` listener. Every mode prints the authorization URL as a fallback, uses PKCE S256 and a random state, and requires explicit browser consent. Only copy the handoff into the login command you started; never paste access/refresh tokens.
+
+The API URL comes from the usual settings hierarchy. OAuth requires HTTPS, except for HTTP localhost development servers. Root settings can appear before or after `login`, for example:
+
+```bash
+kittengrid-agent login --manual --api-url https://app.kittengrid.com --auth-file /private/authn.json
+```
+
+Operators must register/update the public client on the backend with `oauth:register_agent`. It registers the dynamic-port loopback callback and the backend's `/oauth/manual` handoff page. The manual page only displays the short-lived code and state; PKCE verification still happens at the token endpoint. Existing backend registrations must be updated before using manual login.
+
+The public OAuth client ID is `kittengrid-agent`, and login waits up to 600 seconds for authorization. Timeout, denial, invalid state, or exchange failure leaves existing credentials untouched. Ctrl-C cancels the authorization wait. `login --no-auth-file` is rejected because there would be nowhere to save credentials.
+
+Successful login writes an `oauth` object containing `client_id`, `access_token`, `refresh_token`, and Unix-seconds `expires_at` to `authn.json`, replacing any saved API key (without revoking that API key on the backend). New parent directories are private on Unix and the credential file is `0600`. Explicit API keys in flags/environment/YAML still win; login warns when one is configured. Remove that override to use the OAuth session.
+
+API requests use the saved access token and refresh it when within 60 seconds of expiry, including during long-running agent sessions. Refresh tokens rotate; a private `.lock` sidecar serializes refreshes across concurrent processes, and the credentials are reread after locking. Updates use an atomic private-file replacement. Failed refreshes are not retried blindly and do not overwrite saved credentials; run `login` again if the grant is no longer valid. OAuth requests and authenticated API requests do not follow redirects. No logout command is included yet.
 
 ## Project Settings
 

@@ -1,7 +1,7 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     fs::File,
-    io::{self, BufReader},
+    io::{self, BufReader, Write},
     path::{Path, PathBuf},
 };
 
@@ -24,16 +24,42 @@ pub(crate) enum AuthError {
     },
     #[error("Authentication file '{}': api_key must be nonempty and contain no whitespace or control characters", .0.display())]
     InvalidKey(PathBuf),
+    #[error("{0}")]
+    OAuth(String),
 }
 
 // Intentionally no Debug implementation: credentials must not be dumped.
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
-struct AuthFile {
-    api_key: String,
+pub(crate) struct AuthFile {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth: Option<OAuthCredentials>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct OAuthCredentials {
+    pub client_id: String,
+    pub access_token: String,
+    pub refresh_token: String,
+    pub expires_at: u64,
+}
+
+pub(crate) fn failure(message: &str) -> AuthError {
+    AuthError::OAuth(message.into())
+}
+
+fn valid_secret(value: &str) -> bool {
+    !value.is_empty() && !value.chars().any(|c| c.is_whitespace() || c.is_control())
 }
 
 pub(crate) fn load_api_key(path: &Path, required: bool) -> Result<Option<String>, AuthError> {
+    Ok(load(path, required)?.and_then(|auth| auth.api_key))
+}
+
+pub(crate) fn load(path: &Path, required: bool) -> Result<Option<AuthFile>, AuthError> {
     let read_error = |source| AuthError::Read {
         path: path.into(),
         source,
@@ -60,15 +86,129 @@ pub(crate) fn load_api_key(path: &Path, required: bool) -> Result<Option<String>
             line: error.line(),
             column: error.column(),
         })?;
-    if auth.api_key.is_empty()
-        || auth
-            .api_key
-            .chars()
-            .any(|c| c.is_whitespace() || c.is_control())
-    {
-        return Err(AuthError::InvalidKey(path.into()));
+    if let Some(key) = &auth.api_key {
+        if !valid_secret(key) {
+            return Err(AuthError::InvalidKey(path.into()));
+        }
     }
-    Ok(Some(auth.api_key))
+    if let Some(oauth) = &auth.oauth {
+        if !valid_secret(&oauth.client_id)
+            || !valid_secret(&oauth.access_token)
+            || !valid_secret(&oauth.refresh_token)
+        {
+            return Err(failure(
+                "Invalid saved OAuth credentials; run kittengrid-agent login again",
+            ));
+        }
+    }
+    if auth.api_key.is_none() && auth.oauth.is_none() {
+        return Err(AuthError::InvalidJson {
+            path: path.into(),
+            line: 0,
+            column: 0,
+        });
+    }
+    Ok(Some(auth))
+}
+
+fn parent(path: &Path) -> &Path {
+    path.parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
+}
+
+fn prepare_parent(path: &Path) -> Result<(), AuthError> {
+    if path.as_os_str().is_empty() {
+        return Err(failure(
+            "No authentication file path available; supply --auth-file",
+        ));
+    }
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder
+        .create(parent(path))
+        .map_err(|_| failure("Cannot create authentication directory"))
+}
+
+// Cross-process serialization matters because refresh tokens rotate. The file
+// must be reread after taking this lock, not refreshed from a stale snapshot.
+pub(crate) async fn lock(path: &Path) -> Result<filelock::OwnedFileLockGuard, AuthError> {
+    prepare_parent(path)?;
+    let mut lock_path = path.as_os_str().to_owned();
+    lock_path.push(".lock");
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).read(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let file = options
+        .open(lock_path)
+        .map_err(|_| failure("Cannot open authentication lock file"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if file
+            .metadata()
+            .map_err(|_| failure("Cannot inspect authentication lock file"))?
+            .permissions()
+            .mode()
+            & 0o077
+            != 0
+        {
+            return Err(failure(
+                "Authentication lock file must be private (chmod 600)",
+            ));
+        }
+    }
+    tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        filelock::FileLock::from_file(file).lock_owned_async(),
+    )
+    .await
+    .map_err(|_| failure("Timed out waiting for authentication file lock"))?
+    .map_err(|_| failure("Cannot lock authentication file"))
+}
+
+pub(crate) fn save(path: &Path, auth: &AuthFile) -> Result<(), AuthError> {
+    prepare_parent(path)?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent(path))
+        .map_err(|_| failure("Cannot create private authentication file"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        temporary
+            .as_file()
+            .set_permissions(std::fs::Permissions::from_mode(0o600))
+            .map_err(|_| failure("Cannot restrict authentication file permissions"))?;
+    }
+    serde_json::to_writer_pretty(&mut temporary, auth)
+        .map_err(|_| failure("Cannot encode authentication credentials"))?;
+    temporary
+        .write_all(b"\n")
+        .and_then(|_| temporary.as_file().sync_all())
+        .map_err(|_| failure("Cannot persist authentication credentials"))?;
+    temporary.persist(path).map_err(|_| {
+        failure("Cannot replace authentication file; login again after fixing file permissions")
+    })?;
+    Ok(())
+}
+
+pub(crate) async fn save_login(path: &Path, oauth: OAuthCredentials) -> Result<(), AuthError> {
+    let _lock = lock(path).await?;
+    save(
+        path,
+        &AuthFile {
+            api_key: None,
+            oauth: Some(oauth),
+        },
+    )
 }
 
 #[cfg(test)]
@@ -82,6 +222,23 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn lock_wait_is_cancellable_and_guard_drop_releases_lock() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("authn.json");
+        let guard = lock(&path).await.unwrap();
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(25), lock(&path),)
+                .await
+                .is_err()
+        );
+        drop(guard);
+        let _guard = tokio::time::timeout(std::time::Duration::from_secs(1), lock(&path))
+            .await
+            .expect("lock should be released when the guard is dropped")
+            .unwrap();
     }
 
     #[test]

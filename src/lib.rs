@@ -10,6 +10,8 @@ pub mod config;
 pub mod data_dir;
 mod endpoints;
 pub mod kittengrid_api;
+pub mod login;
+mod oauth;
 pub mod process_controller;
 pub mod utils;
 use axum::{

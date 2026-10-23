@@ -14,7 +14,7 @@ use std::{
 };
 
 #[derive(Debug, thiserror::Error)]
-enum ConfigError {
+pub(crate) enum ConfigError {
     #[error("Failed to open configuration file '{}': {source}", path.display())]
     Open { path: PathBuf, source: io::Error },
     #[error("Failed to parse configuration file '{}': {source}", path.display())]
@@ -26,11 +26,20 @@ enum ConfigError {
     GlobalServices(PathBuf),
     #[error(transparent)]
     Authentication(#[from] crate::authn::AuthError),
+    #[error("Invalid api_url: expected an HTTP(S) server origin without userinfo, path, query, or fragment")]
+    InvalidApiUrl,
+    #[error("OAuth requires an HTTPS api_url (HTTP is allowed for localhost)")]
+    InsecureOAuthApiUrl,
+}
+
+struct ParsedConfig {
+    config: Config,
+    command: Option<Command>,
 }
 
 // Returns a reference to a lazily created Config object.
 // TODO: FIX TESTS ARGUMENTS
-static CONFIG: Lazy<Config> = Lazy::new(|| {
+static CONFIG: Lazy<ParsedConfig> = Lazy::new(|| {
     let mut args;
 
     if cfg!(test) {
@@ -42,14 +51,21 @@ static CONFIG: Lazy<Config> = Lazy::new(|| {
             "kittengrid.test.yml",
         ]);
     } else {
-        args = Args::parse();
+        use clap::{CommandFactory, FromArgMatches};
+        // Root settings are also accepted after `login`.
+        let matches = Args::command()
+            .mut_args(|arg| arg.global(true))
+            .get_matches();
+        args = Args::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
     }
 
-    process_args(&mut args).unwrap_or_else(|error| {
+    let command = args.command.clone();
+    let config = process_args(&mut args).unwrap_or_else(|error| {
         // Configuration is loaded before the logger is initialized.
         eprintln!("{error}");
         std::process::exit(1);
-    })
+    });
+    ParsedConfig { config, command }
 });
 
 fn configuration_directory() -> Option<PathBuf> {
@@ -119,10 +135,18 @@ fn process_args(args: &mut Args) -> Result<Config, ConfigError> {
     config.update(&mut args.config);
     let explicit_auth_file = !config.auth_file.as_os_str().is_empty();
     config.set_defaults_if_missing();
+    config.validate()?;
 
     // Saved credentials are a fallback, never an override of explicitly
     // configured keys. An unused auth file is not opened or validated.
-    if !args.no_auth_file && config.api_key.is_empty() && !config.auth_file.as_os_str().is_empty() {
+    if args.no_auth_file {
+        config.auth_file.clear();
+    }
+    if args.command.is_none()
+        && !args.no_auth_file
+        && config.api_key.is_empty()
+        && !config.auth_file.as_os_str().is_empty()
+    {
         if let Some(api_key) = crate::authn::load_api_key(&config.auth_file, explicit_auth_file)? {
             config.api_key = api_key;
         }
@@ -131,7 +155,17 @@ fn process_args(args: &mut Args) -> Result<Config, ConfigError> {
 }
 
 pub fn get_config() -> &'static Config {
-    &CONFIG
+    &CONFIG.config
+}
+
+pub fn get_command() -> Option<&'static Command> {
+    CONFIG.command.as_ref()
+}
+
+#[derive(clap::Subcommand, Clone)]
+pub enum Command {
+    /// Authorize this agent through your browser.
+    Login(crate::login::LoginOptions),
 }
 // Inspiration from https://stackoverflow.com/questions/55133351/is-there-a-way-to-get-clap-to-use-default-values-from-a-file
 
@@ -154,12 +188,43 @@ pub struct Args {
     #[arg(long)]
     no_auth_file: bool,
 
+    #[command(subcommand)]
+    pub command: Option<Command>,
+
     /// Rest of arguments
     #[clap(flatten)]
     pub config: <Config as ClapSerde>::Opt,
 }
 
 impl Config {
+    fn validate(&self) -> Result<(), ConfigError> {
+        self.backend().map(|_| ())
+    }
+
+    pub(crate) fn backend(&self) -> Result<url::Url, ConfigError> {
+        let url = url::Url::parse(&self.api_url).map_err(|_| ConfigError::InvalidApiUrl)?;
+        if !matches!(url.scheme(), "http" | "https")
+            || url.host_str().is_none()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.path() != "/"
+            || url.query().is_some()
+            || url.fragment().is_some()
+        {
+            return Err(ConfigError::InvalidApiUrl);
+        }
+        Ok(url)
+    }
+
+    pub(crate) fn oauth_backend(&self) -> Result<url::Url, ConfigError> {
+        let url = self.backend()?;
+        let local = matches!(url.host_str(), Some("127.0.0.1" | "[::1]" | "localhost"));
+        if url.scheme() != "https" && !(url.scheme() == "http" && local) {
+            return Err(ConfigError::InsecureOAuthApiUrl);
+        }
+        Ok(url)
+    }
+
     fn set_defaults_if_missing(&mut self) -> &mut Self {
         if self.log_level.is_empty() {
             self.log_level = "info".to_string();
@@ -200,7 +265,7 @@ pub struct Config {
     #[arg(long, env("KITTENGRID_BIND_PORT"))]
     pub bind_port: u16,
 
-    #[arg(long, env("KITTENGRID_API_KEY"))]
+    #[arg(long, env("KITTENGRID_API_KEY"), hide_env_values = true)]
     pub api_key: String,
 
     #[arg(long, env("KITTENGRID_API_URL"))]
@@ -325,6 +390,7 @@ mod test {
             global_config_path: None,
             no_global_config: true,
             no_auth_file: true,
+            command: None,
             config: <Config as ClapSerde>::Opt::default(),
         }
     }
@@ -364,6 +430,50 @@ mod test {
             config.services[0].env.as_ref().unwrap()["API_TOKEN"],
             "private-service-token"
         );
+    }
+
+    #[test]
+    fn validates_api_url_without_exposing_its_contents() {
+        for api_url in [
+            "",
+            "invalid",
+            "ftp://backend.example",
+            "https://secret@backend.example",
+            "https://backend.example/path",
+            "https://backend.example?secret",
+            "https://backend.example/#secret",
+        ] {
+            let mut args = test_args();
+            args.config.api_url = Some(api_url.into());
+            let error = process_args(&mut args).unwrap_err();
+            assert!(matches!(error, ConfigError::InvalidApiUrl));
+            assert!(!error.to_string().contains("secret"));
+        }
+    }
+
+    #[test]
+    fn oauth_requires_https_except_for_localhost() {
+        for api_url in [
+            "https://backend.example",
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "http://[::1]:3000",
+        ] {
+            let config = Config {
+                api_url: api_url.into(),
+                ..Default::default()
+            };
+            assert!(config.oauth_backend().is_ok());
+        }
+        let config = Config {
+            api_url: "http://backend.example".into(),
+            ..Default::default()
+        };
+        assert!(config.validate().is_ok());
+        assert!(matches!(
+            config.oauth_backend(),
+            Err(ConfigError::InsecureOAuthApiUrl)
+        ));
     }
 
     #[test]
@@ -410,7 +520,11 @@ mod test {
     fn environment_id_from_yaml() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("agent.yml");
-        std::fs::write(&path, "environment_id: 7ia79uwdfc4j\nservices: []\n").unwrap();
+        std::fs::write(
+            &path,
+            "api_url: https://backend.example\nenvironment_id: 7ia79uwdfc4j\nservices: []\n",
+        )
+        .unwrap();
         let mut args = Args::parse_from([
             "kittengrid-agent",
             "--no-global-config",
@@ -461,7 +575,7 @@ mod test {
         let project = directory.path().join("project.yaml");
         std::fs::write(
             &project,
-            "start_services: true\nbind_port: 1234\nservices: []\n",
+            "api_url: https://backend.example\nstart_services: true\nbind_port: 1234\nservices: []\n",
         )
         .unwrap();
         let mut args = Args::parse_from([
