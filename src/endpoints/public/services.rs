@@ -55,6 +55,9 @@ pub async fn start(
     path: Result<Path<uuid::Uuid>, PathRejection>,
     State(state): State<Arc<AxumState>>,
 ) -> Response {
+    if !state.managed_services {
+        return (StatusCode::CONFLICT, Json(json!({"code":"externally_managed", "error":"Manage this service's process locally"}))).into_response();
+    }
     let services = state.services.clone();
     let id = match find_service(path, &services).await {
         Ok(id) => id,
@@ -75,6 +78,9 @@ pub async fn stop(
     path: Result<Path<uuid::Uuid>, PathRejection>,
     State(state): State<Arc<AxumState>>,
 ) -> Response {
+    if !state.managed_services {
+        return (StatusCode::CONFLICT, Json(json!({"code":"externally_managed", "error":"Manage this service's process locally"}))).into_response();
+    }
     let services = state.services.clone();
 
     let id = match find_service(path, &services).await {

@@ -190,6 +190,10 @@ impl std::fmt::Display for ServiceStream {
 }
 
 impl Service {
+    pub fn mark_external(&mut self) {
+        self.status = ServiceStatus::Running;
+    }
+
     pub fn set_kittengrid_api_handle(&mut self, kittengrid_api: Arc<Mutex<Option<KittengridApi>>>) {
         self.kittengrid_api = kittengrid_api;
     }
@@ -726,11 +730,24 @@ impl Services {
     /// Stops every service.
     pub async fn stop(&self) -> std::io::Result<()> {
         debug!("Stopping all services");
-        for taken_service in self.services.lock().await.values() {
-            debug!("Stopping service '{}'", taken_service.lock().await.name());
-            taken_service.lock().await.stop().await?;
+        let services: Vec<_> = self.services.lock().await.values().cloned().collect();
+        let mut stops = tokio::task::JoinSet::new();
+        for service in services {
+            stops.spawn(async move { service.lock().await.stop().await });
         }
-        Ok(())
+        let mut failure = None;
+        while let Some(result) = stops.join_next().await {
+            match result {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    failure = Some(error);
+                }
+                Err(error) => {
+                    failure = Some(std::io::Error::other(error));
+                }
+            }
+        }
+        failure.map_or(Ok(()), Err)
     }
 }
 

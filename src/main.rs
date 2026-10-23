@@ -12,6 +12,13 @@ async fn main() {
         }
         return;
     }
+    if let Some(lib::config::Command::Dev(options)) = lib::config::get_command() {
+        if let Err(error) = lib::dev::run(config, options).await {
+            eprintln!("Development agent failed: {error}");
+            exit(1);
+        }
+        return;
+    }
     let mut agent = KittengridAgent::new(config.clone());
 
     // Log initialization

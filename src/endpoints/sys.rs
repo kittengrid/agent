@@ -32,6 +32,10 @@ pub async fn shutdown(
             .into_response();
     }
     log::info!("Shutting down: {}", params.0.message);
+    if let Some(shutdown) = &state.shutdown {
+        shutdown.cancel();
+        return Json(serde_json::json!({})).into_response();
+    }
     tokio::spawn(async move {
         if let Err(error) = state.services.stop().await {
             log::error!("Error stopping services during shutdown: {}", error);
@@ -64,6 +68,8 @@ mod test {
             services: std::sync::Arc::new(Default::default()),
             capabilities: Default::default(),
             registration_id: Some(current),
+            managed_services: true,
+            shutdown: None,
         });
         for payload in [
             json!({"message":"old shutdown"}),

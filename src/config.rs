@@ -54,7 +54,13 @@ static CONFIG: Lazy<ParsedConfig> = Lazy::new(|| {
         use clap::{CommandFactory, FromArgMatches};
         // Root settings are also accepted after `login`.
         let matches = Args::command()
-            .mut_args(|arg| arg.global(true))
+            .mut_args(|arg| {
+                if arg.get_id() == "start_services" {
+                    arg
+                } else {
+                    arg.global(true)
+                }
+            })
             .get_matches();
         args = Args::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
     }
@@ -142,7 +148,7 @@ fn process_args(args: &mut Args) -> Result<Config, ConfigError> {
     if args.no_auth_file {
         config.auth_file.clear();
     }
-    if args.command.is_none()
+    if !matches!(&args.command, Some(Command::Login(_) | Command::Dev(_)))
         && !args.no_auth_file
         && config.api_key.is_empty()
         && !config.auth_file.as_os_str().is_empty()
@@ -166,6 +172,8 @@ pub fn get_command() -> Option<&'static Command> {
 pub enum Command {
     /// Authorize this agent through your browser.
     Login(crate::login::LoginOptions),
+    /// Run a local development environment; expose existing services by default.
+    Dev(crate::dev::DevOptions),
 }
 // Inspiration from https://stackoverflow.com/questions/55133351/is-there-a-way-to-get-clap-to-use-default-values-from-a-file
 
