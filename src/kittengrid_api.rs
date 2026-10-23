@@ -18,6 +18,8 @@ pub struct KittengridApi {
     api_url: String,
     client: reqwest::Client,
     config: Config,
+    registration_id: Uuid,
+    replaced: tokio_util::sync::CancellationToken,
 }
 
 use thiserror::Error;
@@ -42,6 +44,9 @@ pub enum KittengridApiError {
     #[error("Change request is closed or merged; registration declined")]
     RegistrationDeclined,
 
+    #[error("This agent has been replaced by a newer registration")]
+    AgentReplaced,
+
     #[error("DeserializationError: {0}")]
     DeserializationError(String),
 }
@@ -51,6 +56,13 @@ pub enum KittengridApiError {
 pub struct StartupOptions {
     pub start_services: bool,
     pub start_terminal: bool,
+}
+
+#[derive(Deserialize)]
+struct RegistrationResponse {
+    registration_id: Uuid,
+    #[serde(flatten)]
+    startup: StartupOptions,
 }
 
 fn agent_identity(config: &Config) -> Vec<(&'static str, &str)> {
@@ -94,8 +106,8 @@ pub async fn from_registration(
     match res {
         Ok(res) => {
             if res.status().is_success() {
-                let startup_options = res
-                    .json::<StartupOptions>()
+                let registration = res
+                    .json::<RegistrationResponse>()
                     .await
                     .map_err(|error| KittengridApiError::DeserializationError(error.to_string()))?;
                 Ok((
@@ -103,8 +115,10 @@ pub async fn from_registration(
                         config: config.clone(),
                         api_url: config.api_url.clone(),
                         client,
+                        registration_id: registration.registration_id,
+                        replaced: tokio_util::sync::CancellationToken::new(),
                     },
-                    startup_options,
+                    registration.startup,
                 ))
             } else if res.status() == reqwest::StatusCode::CONFLICT {
                 // Only registration uses 409 to decline provisioning for a
@@ -219,6 +233,36 @@ pub struct PeersCreateServiceResponse {
 }
 
 impl KittengridApi {
+    pub fn registration_id(&self) -> Uuid {
+        self.registration_id
+    }
+
+    pub fn replacement_token(&self) -> tokio_util::sync::CancellationToken {
+        self.replaced.clone()
+    }
+
+    async fn api_error(&self, response: reqwest::Response) -> KittengridApiError {
+        let error = process_api_status_error_from_response(response).await;
+        if matches!(error, KittengridApiError::AgentReplaced) {
+            self.replaced.cancel();
+        }
+        error
+    }
+
+    pub async fn heartbeat(&self) -> Result<(), KittengridApiError> {
+        let response = self
+            .post("agents/heartbeat")
+            .await?
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await?;
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            Err(self.api_error(response).await)
+        }
+    }
+
     pub fn set_startup_options(&mut self, start_services: bool, start_terminal: bool) {
         self.config.start_services = start_services;
         self.config.start_terminal = start_terminal;
@@ -242,7 +286,7 @@ impl KittengridApi {
                 if res.status().is_success() {
                     Ok(())
                 } else {
-                    Err(process_api_status_error_from_response(res).await)
+                    Err(self.api_error(res).await)
                 }
             }
             Err(e) => Err(KittengridApiError::RequestError(e)),
@@ -280,7 +324,7 @@ impl KittengridApi {
                 if res.status().is_success() {
                     Ok(())
                 } else {
-                    Err(process_api_status_error_from_response(res).await)
+                    Err(self.api_error(res).await)
                 }
             }
             Err(e) => Err(KittengridApiError::RequestError(e)),
@@ -307,7 +351,7 @@ impl KittengridApi {
                         Err(e) => Err(KittengridApiError::DeserializationError(e.to_string())),
                     }
                 } else {
-                    Err(process_api_status_error_from_response(res).await)
+                    Err(self.api_error(res).await)
                 }
             }
             Err(e) => Err(KittengridApiError::RequestError(e)),
@@ -345,7 +389,7 @@ impl KittengridApi {
             Ok(res) => {
                 if !res.status().is_success() {
                     // If the response is successful, we can process the response
-                    return Err(process_api_status_error_from_response(res).await);
+                    return Err(self.api_error(res).await);
                 }
                 let data = res.json::<PeersCreateServiceResponse>().await;
                 match data {
@@ -373,7 +417,7 @@ impl KittengridApi {
                         Err(e) => Err(KittengridApiError::DeserializationError(e.to_string())),
                     }
                 } else {
-                    Err(process_api_status_error_from_response(res).await)
+                    Err(self.api_error(res).await)
                 }
             }
             Err(e) => Err(KittengridApiError::RequestError(e)),
@@ -422,7 +466,7 @@ impl KittengridApi {
                 if res.status().is_success() {
                     Ok(())
                 } else {
-                    Err(process_api_status_error_from_response(res).await)
+                    Err(self.api_error(res).await)
                 }
             }
             Err(e) => Err(KittengridApiError::RequestError(e)),
@@ -448,20 +492,33 @@ impl KittengridApi {
         &self,
         request: reqwest::RequestBuilder,
     ) -> Result<reqwest::RequestBuilder, KittengridApiError> {
+        if self.replaced.is_cancelled() {
+            return Err(KittengridApiError::AgentReplaced);
+        }
         let bearer = crate::credential_provider::bearer(&self.config)
             .await
             .map_err(|error| KittengridApiError::AuthenticationError(error.to_string()))?;
         Ok(request
             .bearer_auth(bearer)
-            .query(&agent_identity(&self.config)))
+            .query(&agent_identity(&self.config))
+            .query(&[("registration_id", self.registration_id)]))
     }
 }
 
 pub async fn process_api_status_error_from_response(res: reqwest::Response) -> KittengridApiError {
+    if res.status().as_u16() == 409 {
+        let body = res.text().await.unwrap_or_default();
+        if serde_json::from_str::<serde_json::Value>(&body)
+            .is_ok_and(|value| value["code"] == "agent_replaced")
+        {
+            return KittengridApiError::AgentReplaced;
+        }
+        return KittengridApiError::ApiStatusError(body);
+    }
     if res.status().as_u16() == 401 {
-        KittengridApiError::UnauthorizedError(res.text().await.unwrap())
+        KittengridApiError::UnauthorizedError(res.text().await.unwrap_or_default())
     } else {
-        KittengridApiError::ApiStatusError(res.text().await.unwrap())
+        KittengridApiError::ApiStatusError(res.text().await.unwrap_or_default())
     }
 }
 
@@ -533,10 +590,24 @@ mod test {
     }
 
     #[tokio::test]
+    async fn successful_registration_requires_a_registration_id() {
+        let (config, server) = registration_server(
+            axum::http::StatusCode::CREATED,
+            r#"{"start_services":true}"#,
+        )
+        .await;
+        assert!(matches!(
+            from_registration(&config).await,
+            Err(KittengridApiError::DeserializationError(_))
+        ));
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn registration_success_preserves_startup_options() {
         let (config, server) = registration_server(
             axum::http::StatusCode::CREATED,
-            r#"{"start_services":true,"start_terminal":false}"#,
+            r#"{"start_services":true,"start_terminal":false,"registration_id":"5c7bbfe8-a6b1-4f48-aeb8-72d25dcc2399"}"#,
         )
         .await;
         let (_, options) = from_registration(&config).await.unwrap();

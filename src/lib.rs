@@ -64,6 +64,7 @@ impl Default for Capabilities {
 pub struct AxumState {
     services: Arc<crate::service::Services>,
     capabilities: Capabilities,
+    registration_id: Option<uuid::Uuid>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
@@ -121,10 +122,12 @@ pub async fn launch(
     listener: tokio::net::TcpListener,
     services: Arc<crate::service::Services>,
     capabilities: Capabilities,
+    registration_id: Option<uuid::Uuid>,
 ) {
     let state = AxumState {
         services,
         capabilities,
+        registration_id,
     };
     axum::serve(
         listener,

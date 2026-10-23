@@ -337,7 +337,7 @@ async fn running_clients_refresh_before_followup_api_requests() {
     let app = Router::new()
         .route("/api/v1/agents/register", post(move |headers: HeaderMap| {
             let sender = registration_sender.clone();
-            async move { sender.send(headers["authorization"].to_str().unwrap().to_owned()).unwrap(); Json(serde_json::json!({})) }
+            async move { sender.send(headers["authorization"].to_str().unwrap().to_owned()).unwrap(); Json(serde_json::json!({"registration_id":"5c7bbfe8-a6b1-4f48-aeb8-72d25dcc2399"})) }
         }))
         .route("/api/v1/agents/environment", axum::routing::put(move |headers: HeaderMap| {
             let sender = sender.clone();
