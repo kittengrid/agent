@@ -28,11 +28,13 @@ jobs:
             artifact_name: kittengrid-agent-linux-arm64
             runner: ubuntu-24.04-arm
             os: linux
-          - target: x86_64-apple-darwin
-            bin_name: kittengrid-agent
-            artifact_name: kittengrid-agent-macos-amd64
-            runner: macos-13
-            os: macos
+          # Intel macOS builds use the constrained macos-13 hosted-runner pool.
+          # Re-enable when capacity is available:
+          # - target: x86_64-apple-darwin
+          #   bin_name: kittengrid-agent
+          #   artifact_name: kittengrid-agent-macos-amd64
+          #   runner: macos-13
+          #   os: macos
           - target: aarch64-apple-darwin
             bin_name: kittengrid-agent
             artifact_name: kittengrid-agent-macos-arm64
@@ -168,7 +170,6 @@ jobs:
           files: |
             artifacts/kittengrid-agent-linux-amd64/*.tar.gz
             artifacts/kittengrid-agent-linux-arm64/*.tar.gz
-            artifacts/kittengrid-agent-macos-amd64/*.tar.gz
             artifacts/kittengrid-agent-macos-arm64/*.tar.gz
           body: |
             Canary build of `main` at ${{ github.sha }}.
@@ -204,7 +205,6 @@ jobs:
           files: |
             artifacts/kittengrid-agent-linux-amd64/*.tar.gz
             artifacts/kittengrid-agent-linux-arm64/*.tar.gz
-            artifacts/kittengrid-agent-macos-amd64/*.tar.gz
             artifacts/kittengrid-agent-macos-arm64/*.tar.gz
           body: |
             ## Kittengrid Agent ${{ steps.get_version.outputs.VERSION }}
@@ -213,7 +213,6 @@ jobs:
 
             - Linux x86_64 (Intel/AMD)
             - Linux ARM64 (ARM)
-            - macOS x86_64 (Intel)
             - macOS ARM64 (Apple Silicon)
 
             ### Installation
