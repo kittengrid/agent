@@ -74,7 +74,11 @@ static CONFIG: Lazy<ParsedConfig> = Lazy::new(|| {
     ParsedConfig { config, command }
 });
 
-fn configuration_directory() -> Option<PathBuf> {
+/// Directory for user-specific agent state, following platform conventions.
+///
+/// This is `~/.config` (or XDG_CONFIG_HOME) on Linux and
+/// `~/Library/Application Support` on macOS.
+pub(crate) fn configuration_directory() -> Option<PathBuf> {
     dirs::config_dir().map(|directory| directory.join("kittengrid-agent"))
 }
 

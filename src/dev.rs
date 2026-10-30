@@ -31,7 +31,7 @@ async fn prepare(
     let file = options
         .workspaces_file
         .clone()
-        .or_else(|| dirs::config_dir().map(|p| p.join("kittengrid-agent/workspaces.json")))
+        .or_else(|| crate::config::configuration_directory().map(|p| p.join("workspaces.json")))
         .ok_or("Cannot locate workspace state; supply --workspaces-file")?;
     let mut store = Store::open(file).await?;
     let environment = if options.environment.name.is_none() {
