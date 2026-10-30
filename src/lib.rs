@@ -12,7 +12,6 @@ pub mod data_dir;
 pub mod dev;
 pub mod development;
 mod endpoints;
-mod exposure;
 pub mod kittengrid_api;
 pub mod login;
 mod oauth;
@@ -29,7 +28,8 @@ pub mod persisted_buf_reader_broadcaster;
 pub mod service;
 pub mod ttyd;
 
-pub mod wireguard;
+pub mod kittenguard;
+mod smol_device;
 
 extern crate alloc;
 

@@ -433,11 +433,6 @@ impl Service {
                 self.port(),
             )
         });
-        let proxy_target_host = match self.host().as_str() {
-            "localhost" | "127.0.0.1" | "::1" => None,
-            host => Some((host.to_string(), self.port())),
-        };
-
         let on_health_status_change_callback = Arc::new(Self::create_health_status_callback(
             self.description.name.clone(),
             self.id,
@@ -448,7 +443,6 @@ impl Service {
             child,
             on_stop_callback,
             health_check,
-            proxy_target_host,
             Some(on_health_status_change_callback),
         )
         .await;

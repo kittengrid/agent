@@ -17,7 +17,7 @@ RUN apt-get update -qq \
     && echo 'deb [trusted=yes] https://kittengrid-repository-public.s3.eu-west-3.amazonaws.com/package-repository/ jammy main' > /etc/apt/sources.list.d/internal_repository.list \
     && apt-get update -qq \
     && DEBIAN_FRONTEND=noninteractive apt-get install -o Dpkg::Options::=--force-confdef -yq \
-    --no-install-recommends jq curl dnsutils lsof ngrep wget ca-certificates iproute2 inetutils-ping vim iptables tcpdump
+    --no-install-recommends jq curl dnsutils lsof ngrep wget ca-certificates inetutils-ping vim tcpdump
 RUN useradd -m -o -u 999 ${APP_USER} && chown ${APP_USER} ${APP_ROOT} \
     && apt-get install -y sudo \
     && adduser ${APP_USER} sudo \
