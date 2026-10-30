@@ -1,6 +1,6 @@
 use crate::config::HealthCheck as HealthCheckConfig;
 use crate::HealthStatus;
-use log::{debug, error, info};
+use log::{debug, error};
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
@@ -9,7 +9,6 @@ use std::sync::Arc;
 
 use thiserror::Error;
 
-use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast;
 
 use tokio::task::JoinSet;
@@ -29,11 +28,11 @@ pub enum ProcessControllerError {
     #[error("Join error: {0}")]
     JoinError(#[from] tokio::task::JoinError),
 
+    #[error("Health-check client error: {0}")]
+    HealthCheckClient(#[from] reqwest::Error),
+
     #[error("Error sending shutdown message: {0}")]
     ChannelSendError(#[from] tokio::sync::broadcast::error::SendError<ServiceCommand>),
-
-    #[error("TCP proxy listener error: {0}")]
-    TcpProxyBind(std::io::Error),
 }
 
 type OnStopCallback = dyn Fn(ExitStatus) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync;
@@ -113,7 +112,6 @@ impl ProcessController {
         child: Child,
         on_stop: Arc<OnStopCallback>,
         health_check: Option<HealthCheck>,
-        proxy_target: Option<(String, u16)>,
         health_state_changed: Option<Arc<OnStateChangedCallback>>,
     ) -> Self {
         let (stop_tx, stop_rx) = broadcast::channel(1);
@@ -126,14 +124,6 @@ impl ProcessController {
             stop_rx.resubscribe(),
             stop_tx.clone(),
         ));
-
-        if let Some((target_host, port)) = proxy_target {
-            set.spawn(Self::spawn_tcp_proxy_task(
-                target_host,
-                port,
-                stop_rx.resubscribe(),
-            ));
-        }
 
         // Spawn the health check task if configured
         if let Some(health_check) = health_check {
@@ -158,6 +148,16 @@ impl ProcessController {
         mut stop_rx: broadcast::Receiver<ServiceCommand>,
         on_stop_health_state_changed: Option<Arc<OnStateChangedCallback>>,
     ) -> Result<(), ProcessControllerError> {
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(health_check.timeout.max(1)))
+            .build()?;
+        let url = format!(
+            "http://{}:{}/{}",
+            health_check.host,
+            health_check.port,
+            health_check.path.trim_start_matches('/')
+        );
         let mut status = HealthStatus::Unhealthy;
         loop {
             tokio::select! {
@@ -173,11 +173,16 @@ impl ProcessController {
                         }
                     }
                 }
-                _ = time::sleep(Duration::from_secs(health_check.interval)) => {
-                    let new_status = reqwest::get(&format!("http://{}:{}/{}", health_check.host, health_check.port, health_check.path))
-                        .await
-                        .map(|_| HealthStatus::Healthy)
-                        .unwrap_or_else(|_| HealthStatus::Unhealthy);
+                result = async {
+                    time::sleep(Duration::from_secs(health_check.interval)).await;
+                    client.get(&url).send().await
+                } => {
+                    // Keep the request inside select! so stop also cancels an
+                    // in-flight check against a server that never responds.
+                    let new_status = match result {
+                        Ok(response) if response.status().is_success() => HealthStatus::Healthy,
+                        _ => HealthStatus::Unhealthy,
+                    };
 
                     if status != new_status {
                         status = new_status;
@@ -185,44 +190,6 @@ impl ProcessController {
                             on_state_changed(status).await;
                         }
                     }
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Listens locally for tunneled traffic and forwards it to a service in another
-    /// network namespace, such as GitLab's `docker:dind` service container.
-    async fn spawn_tcp_proxy_task(
-        target_host: String,
-        port: u16,
-        mut stop_rx: broadcast::Receiver<ServiceCommand>,
-    ) -> Result<(), ProcessControllerError> {
-        let listener = TcpListener::bind(("0.0.0.0", port))
-            .await
-            .map_err(ProcessControllerError::TcpProxyBind)?;
-        info!("Proxying local port {} to {}:{}", port, target_host, port);
-
-        loop {
-            tokio::select! {
-                message = stop_rx.recv() => match message {
-                    Ok(ServiceCommand::Stop) => break,
-                    Err(error) => return Err(ProcessControllerError::BroadcastReceiveError(error)),
-                },
-                accepted = listener.accept() => {
-                    let (mut client, _) = accepted.map_err(ProcessControllerError::TcpProxyBind)?;
-                    let target_host = target_host.clone();
-                    tokio::spawn(async move {
-                        match TcpStream::connect((target_host.as_str(), port)).await {
-                            Ok(mut target) => {
-                                let _ = tokio::io::copy_bidirectional(&mut client, &mut target).await;
-                            }
-                            Err(error) => {
-                                error!("Failed to connect TCP proxy to {}:{}: {}", target_host, port, error);
-                            }
-                        }
-                    });
                 }
             }
         }
@@ -306,7 +273,7 @@ mod test {
             .spawn()
             .unwrap();
         let mut controller =
-            ProcessController::new(child, Arc::new(closure(data_clone)), None, None, None).await;
+            ProcessController::new(child, Arc::new(closure(data_clone)), None, None).await;
 
         assert!(controller.stop().await.is_ok());
         controller.wait().await.unwrap();
@@ -324,7 +291,7 @@ mod test {
             .spawn()
             .unwrap();
         let mut controller =
-            ProcessController::new(child, Arc::new(closure(data_clone)), None, None, None).await;
+            ProcessController::new(child, Arc::new(closure(data_clone)), None, None).await;
 
         controller.wait().await.unwrap();
         assert_eq!(*data.lock().unwrap(), Some(0));
@@ -341,61 +308,137 @@ mod test {
             .spawn()
             .unwrap();
         let mut controller =
-            ProcessController::new(child, Arc::new(closure(data_clone)), None, None, None).await;
+            ProcessController::new(child, Arc::new(closure(data_clone)), None, None).await;
 
         controller.wait().await.unwrap();
         assert_eq!(*data.lock().unwrap(), Some(1));
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+    #[tokio::test]
     async fn test_process_controller_with_health_check() {
-        let data = Arc::new(Mutex::new(None));
-        let data_clone = data.clone();
-        let data_clone_2 = data.clone();
-
-        let child = std::process::Command::new("python")
-            .arg("-m")
-            .arg("http.server")
-            .arg("8000")
+        // Keep the health result separate from the process exit status, and
+        // bind an ephemeral port rather than depending on Python and port 8000.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let app = axum::Router::new().route("/health", axum::routing::get(|| async { "ok" }));
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let exit_status = Arc::new(Mutex::new(Some(-1)));
+        let (health_tx, mut health_rx) = tokio::sync::mpsc::channel(1);
+        let child = std::process::Command::new("sleep")
+            .arg("60")
             .spawn()
             .unwrap();
-
         let mut controller = ProcessController::new(
             child,
-            Arc::new(closure(data_clone)),
+            Arc::new(closure(exit_status.clone())),
             Some(HealthCheck {
-                interval: 1,
-                timeout: 10,
-                retries: 10,
-                path: "/".to_string(),
-                host: "127.0.0.1".to_string(),
-                port: 8000,
+                interval: 0,
+                timeout: 2,
+                retries: 1,
+                path: "/health".into(),
+                host: "127.0.0.1".into(),
+                port,
             }),
-            None,
-            Some(Arc::new({
-                let data = data_clone_2.clone();
-                move |status: crate::HealthStatus| {
-                    Box::pin({
-                        let data = data.clone();
-                        async move {
-                            {
-                                let mut data = data.lock().unwrap();
-                                match status {
-                                    crate::HealthStatus::Healthy => *data = Some(1),
-                                    crate::HealthStatus::Unhealthy => *data = Some(0),
-                                }
-                            };
-                        }
-                    })
-                }
+            Some(Arc::new(move |status| {
+                let health_tx = health_tx.clone();
+                Box::pin(async move {
+                    let _ = health_tx.send(status).await;
+                })
             })),
         )
         .await;
-        assert_eq!(*data.lock().unwrap(), None);
-        tokio::time::sleep(Duration::from_secs(5)).await;
-        assert_eq!(*data.lock().unwrap(), Some(1));
-
+        let healthy = time::timeout(Duration::from_secs(5), health_rx.recv()).await;
+        // Clean up even when the assertion below fails.
         controller.stop().await.unwrap();
-        controller.wait().await.unwrap();
+        server.abort();
+        assert_eq!(healthy.unwrap(), Some(HealthStatus::Healthy));
+        assert_eq!(*exit_status.lock().unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn stopping_cancels_an_in_flight_health_check() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (accepted_tx, accepted_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (_stream, _) = listener.accept().await.unwrap();
+            let _ = accepted_tx.send(());
+            // Accept the connection but never send any HTTP response.
+            std::future::pending::<()>().await;
+        });
+        let (stop_tx, stop_rx) = broadcast::channel(1);
+        let mut checker = tokio::spawn(ProcessController::spawn_health_check_task(
+            HealthCheck {
+                interval: 0,
+                timeout: 60,
+                retries: 1,
+                path: "/".into(),
+                host: "127.0.0.1".into(),
+                port,
+            },
+            stop_rx,
+            None,
+        ));
+        let accepted = time::timeout(Duration::from_secs(5), accepted_rx).await;
+        stop_tx.send(ServiceCommand::Stop).unwrap();
+        let stopped = time::timeout(Duration::from_secs(1), &mut checker).await;
+        checker.abort();
+        server.abort();
+        accepted.unwrap().unwrap();
+        stopped
+            .expect("stop must not wait for the HTTP request timeout")
+            .unwrap()
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn health_check_uses_the_configured_request_timeout() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        // First respond successfully, then leave the next request hanging.
+        let (first_response_tx, first_response_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buffer = [0; 1024];
+            stream.read(&mut buffer).await.unwrap();
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .await
+                .unwrap();
+            drop(stream);
+            let (_stream, _) = listener.accept().await.unwrap();
+            let _ = first_response_tx.send(());
+            std::future::pending::<()>().await;
+        });
+        let (stop_tx, stop_rx) = broadcast::channel(1);
+        let (health_tx, mut health_rx) = tokio::sync::mpsc::channel(4);
+        let checker = tokio::spawn(ProcessController::spawn_health_check_task(
+            HealthCheck {
+                interval: 0,
+                timeout: 1,
+                retries: 1,
+                path: "/".into(),
+                host: "127.0.0.1".into(),
+                port,
+            },
+            stop_rx,
+            Some(Arc::new(move |status| {
+                let health_tx = health_tx.clone();
+                Box::pin(async move {
+                    let _ = health_tx.send(status).await;
+                })
+            })),
+        ));
+        let result = time::timeout(Duration::from_secs(5), async {
+            assert_eq!(health_rx.recv().await, Some(HealthStatus::Healthy));
+            first_response_rx.await.unwrap();
+            assert_eq!(health_rx.recv().await, Some(HealthStatus::Unhealthy));
+        })
+        .await;
+        let _ = stop_tx.send(ServiceCommand::Stop);
+        checker.abort();
+        server.abort();
+        result.expect("a stalled health request must time out and mark the service unhealthy");
     }
 }

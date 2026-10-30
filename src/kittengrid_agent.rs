@@ -15,8 +15,7 @@ pub struct KittengridAgent {
     local_addr: Option<std::net::SocketAddr>,
     development: bool,
     shutdown: tokio_util::sync::CancellationToken,
-    interfaces: Vec<crate::wireguard::WireGuard>,
-    proxies: tokio::task::JoinSet<()>,
+    tunnels: Vec<crate::kittenguard::KittenGuard>,
 }
 
 use thiserror::Error;
@@ -40,10 +39,10 @@ pub enum KittengridAgentError {
     NotListeningError,
     #[error("Api Error: ({0})")]
     KittengridApiError(#[from] crate::kittengrid_api::KittengridApiError),
-    #[error("Wireguard Error: ({0})")]
-    WireguardError(#[from] Box<dyn std::error::Error>),
+    #[error("Userspace WireGuard error: ({0})")]
+    WireguardError(#[from] std::io::Error),
     #[error("Service Spawn Error: ({0})")]
-    ServiceSpawnError(#[from] std::io::Error),
+    ServiceSpawnError(std::io::Error),
 }
 
 impl KittengridAgent {
@@ -122,7 +121,7 @@ impl KittengridAgent {
         Ok(startup_options)
     }
 
-    /// Configures local network with wireguard tunnels.
+    /// Starts isolated userspace WireGuard stacks; the host network is untouched.
     pub async fn configure_network(&mut self) -> Result<(), KittengridAgentError> {
         if self.api.is_none() {
             return Err(KittengridAgentError::NotRegisteredError);
@@ -142,7 +141,9 @@ impl KittengridAgent {
             }
         };
 
-        for (device_counter, peer) in peers.iter().enumerate() {
+        let forwards = self.tunnel_forwards()?;
+        let mut tunnels = Vec::new();
+        for peer in &peers {
             let endpoint = match kg_api.peers_get_endpoint(peer.network()).await {
                 Ok(endpoint) => endpoint,
                 Err(e) => {
@@ -150,52 +151,31 @@ impl KittengridAgent {
                 }
             };
 
-            // Set up wireguard tunnel for the peer
-            let mut device = match if self.development {
-                super::wireguard::WireGuard::new_development(
-                    device_counter,
-                    kg_api.registration_id(),
-                )
-                .await
-            } else {
-                super::wireguard::WireGuard::new(device_counter).await
-            } {
-                Ok(device) => device,
-                Err(e) => {
-                    return Err(KittengridAgentError::WireguardError(e));
-                }
-            };
-
-            match device.set_config(peer, &endpoint).await {
-                Ok(_) => {
-                    info!(
-                        "Successfully configured wireguard device {}.",
-                        device.name()
-                    );
-                }
-                Err(e) => {
-                    return Err(KittengridAgentError::WireguardError(e));
-                }
-            }
-            if self.development {
-                if !self.config.start_services {
-                    for service in &self.config.services {
-                        if let Some(task) = crate::exposure::listen(
-                            peer.address(),
-                            service.port,
-                            service.host.as_deref().unwrap_or("localhost"),
-                        )
-                        .await?
-                        {
-                            self.proxies.spawn(task);
-                        }
-                    }
-                }
-                self.interfaces.push(device);
-            }
+            let tunnel =
+                crate::kittenguard::KittenGuard::new(peer, &endpoint, forwards.clone()).await?;
+            info!("Userspace WireGuard tunnel ready at {}.", peer.address());
+            tunnels.push(tunnel);
         }
 
+        // Retain all stacks in both CI and dev mode. On partial failure the
+        // temporary vector drops and shuts down only the new tunnels.
+        self.tunnels = tunnels;
         Ok(())
+    }
+
+    fn tunnel_forwards(&self) -> std::io::Result<Vec<crate::kittenguard::Forward>> {
+        use crate::kittenguard::Forward;
+        let address = self
+            .local_addr
+            .ok_or_else(|| std::io::Error::other("Agent is not listening"))?;
+        let mut forwards = vec![Forward::new(address.port(), &address.ip().to_string())?];
+        for service in &self.config.services {
+            forwards.push(Forward::new(
+                service.port,
+                service.host.as_deref().unwrap_or("localhost"),
+            )?);
+        }
+        Ok(forwards)
     }
 
     /// For now, we just log errors.
@@ -311,6 +291,13 @@ impl KittengridAgent {
             return Err(KittengridAgentError::NotRegisteredError);
         }
 
+        // Terminal ports are allocated after network setup. Make them reachable
+        // on every peer before publishing their public URL.
+        let forward = crate::kittenguard::Forward::new(port, "127.0.0.1")?;
+        for tunnel in &self.tunnels {
+            tunnel.add_forward(forward.clone()).await?;
+        }
+
         match self
             .api
             .as_ref()
@@ -377,14 +364,30 @@ impl KittengridAgent {
                     }
                 }
             };
+            let mut network_failed = false;
+            let network_monitor = async {
+                loop {
+                    if self.tunnels.iter().any(|tunnel| tunnel.is_finished()) {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                }
+            };
             tokio::select! {
                 _ = server => {},
                 _ = monitor => { info!("Agent replaced; exiting."); },
+                _ = network_monitor => {
+                    error!("Userspace tunnel stopped; shutting down agent.");
+                    network_failed = true;
+                },
                 _ = self.shutdown.cancelled(), if self.development => {},
                 _ = async { if self.development { shutdown_signal().await; } else { std::future::pending::<()>().await; } } => {},
             }
             self.stop_managed_services().await;
-            if self.development && !replacement.is_cancelled() {
+            if network_failed {
+                self.set_status(crate::kittengrid_api::EnvironmentStatus::Error)
+                    .await;
+            } else if self.development && !replacement.is_cancelled() {
                 let _ = tokio::time::timeout(
                     std::time::Duration::from_secs(5),
                     self.set_status(crate::kittengrid_api::EnvironmentStatus::Sleeping),
@@ -393,6 +396,54 @@ impl KittengridAgent {
             }
         } else {
             server.await;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{config::ServiceConfig, kittenguard::Forward};
+
+    #[tokio::test]
+    async fn forwards_agent_listener_and_all_service_hosts_in_both_modes() {
+        for development in [false, true] {
+            let config = Config {
+                bind_address: "127.0.0.1".into(),
+                bind_port: 0,
+                services: vec![
+                    ServiceConfig {
+                        port: 8080,
+                        ..Default::default()
+                    },
+                    ServiceConfig {
+                        port: 9090,
+                        host: Some("docker".into()),
+                        ..Default::default()
+                    },
+                    ServiceConfig {
+                        port: 8090,
+                        host: Some("0.0.0.0".into()),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            };
+            let mut agent = if development {
+                KittengridAgent::new_development(config)
+            } else {
+                KittengridAgent::new(config)
+            };
+            let listener = agent.try_bind().await.unwrap();
+            assert_eq!(
+                agent.tunnel_forwards().unwrap(),
+                vec![
+                    Forward::new(listener.local_addr().unwrap().port(), "127.0.0.1").unwrap(),
+                    Forward::new(8080, "localhost").unwrap(),
+                    Forward::new(9090, "docker").unwrap(),
+                    Forward::new(8090, "127.0.0.1").unwrap(),
+                ]
+            );
         }
     }
 }

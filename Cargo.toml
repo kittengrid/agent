@@ -54,8 +54,9 @@ tracing-subscriber = "0.3.23"
 tracing-appender = "0.2.5"
 base64 = "0.22.1"
 futures = "0.3.32"
-defguard_wireguard_rs = "0.9.6"
-x25519-dalek = "2"
+gotatun = { version = "0.10.2", features = ["device"] }
+smoltcp = { version = "0.14.0", default-features = false, features = ["std", "log", "medium-ip", "proto-ipv4", "socket-tcp"] }
+x25519-dalek = { version = "2", features = ["static_secrets"] }
 regex = "1"
 webbrowser = "1"
 filelock = { version = "0.7", features = ["tokio"] }

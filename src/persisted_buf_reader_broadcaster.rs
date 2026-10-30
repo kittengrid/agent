@@ -170,14 +170,23 @@ impl PersistedBufReaderBroadcaster {
                             let Some(data) = data else {
                                 break;
                             };
-                            if !matches!(output_mode, OutputMode::None) {
-                                Self::write_to_static_output(&output_mode, &data);
+                            // Broadcasting and callbacks may wait for slow clients.
+                            // Cancellation must interrupt those waits too, otherwise
+                            // watch()/close() can deadlock while replacing a reader.
+                            tokio::select! {
+                                biased;
+                                _ = cancel_token.cancelled() => break,
+                                _ = async {
+                                    if !matches!(output_mode, OutputMode::None) {
+                                        Self::write_to_static_output(&output_mode, &data);
+                                    }
+                                    let data = Bytes::from(data);
+                                    if let Some(callback) = &on_data {
+                                        callback(data.clone()).await;
+                                    }
+                                    channel_set.broadcast(data).await;
+                                } => {}
                             }
-                            let data = Bytes::from(data);
-                            if let Some(callback) = &on_data {
-                                callback(data.clone()).await;
-                            }
-                            channel_set.broadcast(data).await;
                             debug!("Data sent");
                         }
                     }
@@ -363,6 +372,48 @@ mod tests {
 
         drop(writer);
         broadcaster.close().await;
+    }
+
+    async fn blocked_broadcaster() -> (PersistedBufReaderBroadcaster, BufferReceiver) {
+        let mut broadcaster = PersistedBufReaderBroadcaster::new().await;
+        let receiver = broadcaster.subscribe().await;
+        broadcaster
+            .watch(BufReader::new("first\nsecond\n".as_bytes()))
+            .await;
+        // Each subscriber holds one message. Once both lines are recorded,
+        // broadcast() is blocked trying to enqueue the second one.
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while broadcaster.channel_set.sent_data.read() != "first\nsecond\n" {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        (broadcaster, receiver)
+    }
+
+    #[tokio::test]
+    async fn replacing_a_reader_interrupts_a_blocked_broadcast() {
+        let (mut broadcaster, mut receiver) = blocked_broadcaster().await;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            broadcaster.watch(BufReader::new("restarted\n".as_bytes())),
+        )
+        .await
+        .expect("a slow subscriber must not block service restart");
+        assert_eq!(receiver.recv().await.unwrap(), "first\n");
+        assert_eq!(receiver.recv().await.unwrap(), "restarted\n");
+        broadcaster.close().await;
+    }
+
+    #[tokio::test]
+    async fn closing_a_reader_interrupts_a_blocked_broadcast() {
+        let (mut broadcaster, mut receiver) = blocked_broadcaster().await;
+        tokio::time::timeout(std::time::Duration::from_secs(2), broadcaster.close())
+            .await
+            .expect("a slow subscriber must not block shutdown");
+        assert_eq!(receiver.recv().await.unwrap(), "first\n");
+        assert!(receiver.recv().await.is_none());
     }
 
     #[tokio::test]

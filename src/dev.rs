@@ -106,17 +106,43 @@ pub async fn run(config: &Config, options: &DevOptions) -> Result<(), String> {
     let mut agent = KittengridAgent::new_development(config);
     agent.init().await;
     let result = async {
-        let listener = agent.try_bind().await.map_err(|error| format!("Cannot bind agent listener: {error}"))?;
+        let listener = agent
+            .try_bind()
+            .await
+            .map_err(|error| format!("Cannot bind agent listener: {error}"))?;
         agent.register().await.map_err(|error| error.to_string())?;
-        agent.publish_services().await.map_err(|error| error.to_string())?;
-        agent.configure_network().await.map_err(|error| format!("Cannot configure development networking: {error}. WireGuard networking requires Linux network-administration privileges"))?;
-        agent.register_services().await.map_err(|error| error.to_string())?;
-        if options.start_services { agent.spawn_services(show_output).await.map_err(|error| error.to_string())?; }
-        agent.set_status(crate::kittengrid_api::EnvironmentStatus::Running).await;
-        println!("{} Press Ctrl-C to stop the agent.", if options.start_services {"Managing configured services."} else {"Exposing services; their processes remain externally managed."});
+        agent
+            .publish_services()
+            .await
+            .map_err(|error| error.to_string())?;
+        agent.configure_network().await.map_err(|error| {
+            format!("Cannot configure userspace development networking: {error}")
+        })?;
+        agent
+            .register_services()
+            .await
+            .map_err(|error| error.to_string())?;
+        if options.start_services {
+            agent
+                .spawn_services(show_output)
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+        agent
+            .set_status(crate::kittengrid_api::EnvironmentStatus::Running)
+            .await;
+        println!(
+            "{} Press Ctrl-C to stop the agent.",
+            if options.start_services {
+                "Managing configured services."
+            } else {
+                "Exposing services; their processes remain externally managed."
+            }
+        );
         agent.wait(listener).await;
         Ok(())
-    }.await;
+    }
+    .await;
     if result.is_err() {
         agent.stop_managed_services().await;
         agent

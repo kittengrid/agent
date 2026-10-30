@@ -7,14 +7,9 @@ x-agent: &agent
   environment:
     RUST_TRACING: debug
     CARGO_TARGET_DIR: "/cargo-target/target"
-  user: root
   stdin_open: true
   tty: true
   init: true
-  cap_add:
-    - NET_ADMIN
-  devices:
-    - /dev/net/tun
   networks:
     kittengrid:
   volumes:
