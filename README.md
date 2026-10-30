@@ -25,6 +25,32 @@ The agent can authenticate with either an organization API key or a user OAuth t
 - **API key:** Use an API key for CI, shared environments, and other unattended or organization-level workloads. Supply it with `--api-key`, `KITTENGRID_API_KEY`, or configuration as described below. Keep API keys in your CI secret store and avoid committing them.
 - **OAuth token:** For a local developer environment, run `kittengrid-agent login` to authorize with your user account. The login command obtains and saves an OAuth session so subsequent local agent runs can authenticate without an API key. Login options and saved-credential behavior are described below.
 
+## Local development
+
+Define services with names and ports in `kittengrid.yaml`, start them normally, then run:
+
+```bash
+kittengrid-agent dev                    # Discover Git origin; reuse this checkout/branch
+kittengrid-agent dev --name my-feature  # Find/create this name for the same owner
+kittengrid-agent dev --no-browser       # Print login URL; retain localhost callback
+kittengrid-agent dev --manual           # Copy/paste login, without a callback listener
+kittengrid-agent dev --start-services   # Explicitly opt into process management
+```
+
+`dev` authenticates when necessary, resolves the project, allocates/reuses an environment, registers the agent, publishes service URLs, and stays running. By default it **never starts, restarts, stops, or kills service processes**, including on Ctrl-C or replacement. Backend and YAML/CI startup instructions cannot opt it into process management; only `dev --start-services` does. Terminal startup is disabled. Public process start/stop controls return `409 externally_managed` in expose-only mode; use your own terminal for service logs and process management.
+
+Missing/expired OAuth credentials trigger login interactively. In unattended sessions, run `login` first or explicitly select `--manual` / `--no-browser`; the agent does not silently start an interactive flow. Explicit API keys retain precedence.
+
+Local tunnel setup currently requires **Linux, WireGuard network-administration privileges, and iproute2** (including privileges for its `ip` subprocess). It does not invoke sudo automatically. Each registration owns unique tunnel interfaces, ephemeral UDP ports, and source-based routes; clean shutdown/replacement removes only its own resources. Localhost-bound services are TCP-forwarded from their tunnel addresses, reconnecting to the target for each connection so externally managed restarts work. Wildcard-bound local services need no additional forwarding. HTTP health-check paths can be configured as usual; without one, TCP health checks confirm the exposure listener, not the external process's application health.
+
+Project selection uses an explicit `--project-id` first (no Git required), then `--repository`, then configured `vcs_provider` + `project_vcs_path`, otherwise the selected Git remote in the current checkout. Default remote: `origin`. Git inspection is local/read-only, expands `url.*.insteadOf` aliases, and never fetches or prompts for Git credentials. GitHub/GitLab SSH and HTTPS remotes normalize to provider/path, with embedded credentials discarded; nested GitLab groups are supported. Unknown SSH aliases/self-hosted hosts require explicit project identity, for example `--vcs-provider gitlab --project-vcs-path group/app`, or `--project-id`. The two VCS settings also support existing YAML/environment configuration.
+
+Options include `--remote upstream`, `--repository git@github.com:team/app.git`, and `--project-id <project-public-id>`, with `KITTENGRID_DEV_NAME`, `KITTENGRID_PROJECT_ID`, `KITTENGRID_REPOSITORY`, and `KITTENGRID_GIT_REMOTE` equivalents. `--project-id` and `--repository` cannot be combined. Global flags such as `--api-url` and `--auth-file` work before or after `dev`. The project must already exist in the authenticated organization; the command does not import projects. OAuth uses current browser-equivalent repository visibility; API keys have organization-wide project access.
+
+Without `--name`, the backend generates `<nickname>-<10 random hex characters>` for OAuth or `<organization-slug>-<random>` for API keys, without a redundant repository component. Unnamed runs reuse the environment recorded in global `kittengrid-agent/workspaces.json`, keyed by a structured hash of canonical checkout path, normalized repository identity, and branch (detached HEAD uses its commit). The readable identity and environment public ID are retained; there is no repo-local state or Git-ignore modification. Concurrent startup uses a file lock and atomic writes; a cached environment returning `404` is reallocated. `--workspaces-file` / `KITTENGRID_WORKSPACES_FILE` overrides the mapping path, independently of settings and credentials. Explicit names normalize to lowercase URL-safe slugs of 1–63 characters and are unique within the project. Named reuse only succeeds for the same owner: OAuth environments belong to the token user; API-key environments are organization-owned and shared across that organization's API keys. Another owner's name fails rather than silently taking over. Allocation/name lookup itself does not reset services or the active registration. Starting `dev` then registers a new generation: the latest registration replaces the previous agent, without killing externally managed processes.
+
+The backend requires the project-association migration and metadata lookup endpoints. Existing standalone environment-ID registration remains supported. `dev` disables traffic-based inactivity shutdown and sends heartbeats; Ctrl-C marks the environment sleeping while preserving it for reuse. Hard-kill/crash cleanup and automatic record pruning remain separate work. Organization-owned project environments prevent migration rollback until removed or assigned valid user owners.
+
 ## Registering an existing environment
 
 Set the environment's **public ID** (not its database ID) using one of:
@@ -44,7 +70,7 @@ The environment must already exist and belong to the API key's organization. The
 
 Development environments do not need a repository, PR number, workflow run ID, or commit SHA. Empty SHA values are omitted when publishing services. For a PR preview registered by environment ID, still supply `KITTENGRID_WORKFLOW_RUN_ID` for CI startup authorization and `KITTENGRID_LAST_COMMIT_SHA` for preview-link publication. Both identity modes use `/api/v1/agents/environment` for runtime updates. All backend requests use the `/api/v1` API with API-key authentication. The configured API URL remains the server origin (without `/api/v1`). This requires a backend exposing the versioned API; there is no fallback to unversioned endpoints.
 
-The API's startup instructions are honored as before: development registration requests service startup and no terminal by default. Explicit local startup flags continue to work. This change adds environment identity, not Docker orchestration or expose-only service mode; configured services are still managed processes.
+The API's startup instructions are honored as before: development registration requests service startup and no terminal by default. Explicit local startup flags continue to work. This existing-environment/CI invocation still manages configured processes; use `dev` for the expose-only workflow described above.
 
 ## Registration declined for closed or merged requests
 

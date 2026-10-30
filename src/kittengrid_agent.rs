@@ -13,9 +13,24 @@ pub struct KittengridAgent {
     services: Arc<crate::service::Services>,
     capabilities: crate::Capabilities,
     local_addr: Option<std::net::SocketAddr>,
+    development: bool,
+    shutdown: tokio_util::sync::CancellationToken,
+    interfaces: Vec<crate::wireguard::WireGuard>,
+    proxies: tokio::task::JoinSet<()>,
 }
 
 use thiserror::Error;
+
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    if let Ok(mut terminate) =
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+    {
+        tokio::select! { _ = tokio::signal::ctrl_c() => {}, _ = terminate.recv() => {} }
+        return;
+    }
+    let _ = tokio::signal::ctrl_c().await;
+}
 
 #[derive(Debug, Error)]
 pub enum KittengridAgentError {
@@ -50,6 +65,21 @@ impl KittengridAgent {
         }
     }
 
+    pub fn new_development(config: Config) -> Self {
+        Self {
+            config,
+            development: true,
+            ..Default::default()
+        }
+    }
+
+    pub async fn stop_managed_services(&self) {
+        if !self.development || self.config.start_services {
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(10), self.services.stop())
+                .await;
+        }
+    }
+
     /// Reads config and initializes log
     pub async fn init(&self) {
         info!("Starting kittengrid with config: {:?}.", self.config);
@@ -57,7 +87,10 @@ impl KittengridAgent {
 
         debug!("Adding services to agent.");
         for service in self.config.services.iter() {
-            let service: super::service::Service = service.clone().into();
+            let mut service: super::service::Service = service.clone().into();
+            if self.development && !self.config.start_services {
+                service.mark_external();
+            }
             (*self.services).insert(service).await;
         }
     }
@@ -68,16 +101,22 @@ impl KittengridAgent {
         &mut self,
     ) -> Result<crate::kittengrid_api::StartupOptions, crate::kittengrid_api::KittengridApiError>
     {
-        let (mut api, requested_startup) =
-            crate::kittengrid_api::from_registration(&self.config).await?;
+        let (mut api, requested_startup) = if self.development {
+            crate::kittengrid_api::from_development_registration(&self.config).await?
+        } else {
+            crate::kittengrid_api::from_registration(&self.config).await?
+        };
         let startup_options = crate::kittengrid_api::StartupOptions {
-            start_services: self.config.start_services || requested_startup.start_services,
-            start_terminal: self.config.start_terminal || requested_startup.start_terminal,
+            start_services: self.config.start_services
+                || (!self.development && requested_startup.start_services),
+            start_terminal: !self.development
+                && (self.config.start_terminal || requested_startup.start_terminal),
         };
         api.set_startup_options(
             startup_options.start_services,
             startup_options.start_terminal,
         );
+        api.set_expose_only(self.development && !self.config.start_services);
         self.api = Some(api.clone());
         self.services.set_kittengrid_api(Some(api)).await;
         Ok(startup_options)
@@ -112,7 +151,15 @@ impl KittengridAgent {
             };
 
             // Set up wireguard tunnel for the peer
-            let device = match super::wireguard::WireGuard::new(device_counter).await {
+            let mut device = match if self.development {
+                super::wireguard::WireGuard::new_development(
+                    device_counter,
+                    kg_api.registration_id(),
+                )
+                .await
+            } else {
+                super::wireguard::WireGuard::new(device_counter).await
+            } {
                 Ok(device) => device,
                 Err(e) => {
                     return Err(KittengridAgentError::WireguardError(e));
@@ -129,6 +176,22 @@ impl KittengridAgent {
                 Err(e) => {
                     return Err(KittengridAgentError::WireguardError(e));
                 }
+            }
+            if self.development {
+                if !self.config.start_services {
+                    for service in &self.config.services {
+                        if let Some(task) = crate::exposure::listen(
+                            peer.address(),
+                            service.port,
+                            service.host.as_deref().unwrap_or("localhost"),
+                        )
+                        .await?
+                        {
+                            self.proxies.spawn(task);
+                        }
+                    }
+                }
+                self.interfaces.push(device);
             }
         }
 
@@ -268,17 +331,20 @@ impl KittengridAgent {
 
     /// Binds the agent to the network returining a listener.
     pub async fn bind(&mut self) -> tokio::net::TcpListener {
+        self.try_bind().await.unwrap()
+    }
+
+    pub async fn try_bind(&mut self) -> std::io::Result<tokio::net::TcpListener> {
         let listener = tokio::net::TcpListener::bind(format!(
             "{}:{}",
             self.config.bind_address, self.config.bind_port
         ))
-        .await
-        .unwrap();
-        let addr = listener.local_addr().unwrap();
+        .await?;
+        let addr = listener.local_addr()?;
         self.local_addr = Some(addr);
 
         info!("Listening on: {}", addr);
-        listener
+        Ok(listener)
     }
 
     pub async fn wait(&self, listener: tokio::net::TcpListener) {
@@ -287,6 +353,8 @@ impl KittengridAgent {
             Arc::clone(&self.services),
             self.capabilities.clone(),
             self.api.as_ref().map(|api| api.registration_id()),
+            !self.development || self.config.start_services,
+            self.development.then(|| self.shutdown.clone()),
         );
         if let Some(api) = &self.api {
             let replacement = api.replacement_token();
@@ -311,10 +379,17 @@ impl KittengridAgent {
             };
             tokio::select! {
                 _ = server => {},
-                _ = monitor => {
-                    info!("Agent replaced; stopping managed services and exiting.");
-                    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), self.services.stop()).await;
-                }
+                _ = monitor => { info!("Agent replaced; exiting."); },
+                _ = self.shutdown.cancelled(), if self.development => {},
+                _ = async { if self.development { shutdown_signal().await; } else { std::future::pending::<()>().await; } } => {},
+            }
+            self.stop_managed_services().await;
+            if self.development && !replacement.is_cancelled() {
+                let _ = tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    self.set_status(crate::kittengrid_api::EnvironmentStatus::Sleeping),
+                )
+                .await;
             }
         } else {
             server.await;
