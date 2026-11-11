@@ -80,6 +80,8 @@ If the registration API returns HTTP `409 Conflict`, the PR/MR is no longer open
 
 The agent loads optional global settings and a project YAML file, then applies environment variables and command-line flags.
 
+The API URL defaults to `https://app.kittengrid.com` for all commands, including `dev` and `login`. Override it with `--api-url`, `KITTENGRID_API_URL`, or YAML `api_url` when using another backend.
+
 ## Settings Precedence
 
 From highest to lowest priority:

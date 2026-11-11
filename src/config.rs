@@ -109,6 +109,8 @@ fn read_config(
     Ok(Some(parsed.unwrap_or_default()))
 }
 
+const DEFAULT_API_URL: &str = "https://app.kittengrid.com";
+
 fn process_args(args: &mut Args) -> Result<Config, ConfigError> {
     let mut config = Config::default();
 
@@ -144,6 +146,11 @@ fn process_args(args: &mut Args) -> Result<Config, ConfigError> {
     // override the file layers, so explicit false and zero values are retained.
     config.update(&mut args.config);
     let explicit_auth_file = !config.auth_file.as_os_str().is_empty();
+    // Use the hosted platform unless a configuration layer selected another
+    // backend. This also makes `dev` usable without a separate global config.
+    if config.api_url.is_empty() {
+        config.api_url = DEFAULT_API_URL.to_owned();
+    }
     config.set_defaults_if_missing();
     config.validate()?;
 
@@ -447,7 +454,6 @@ mod test {
     #[test]
     fn validates_api_url_without_exposing_its_contents() {
         for api_url in [
-            "",
             "invalid",
             "ftp://backend.example",
             "https://secret@backend.example",
@@ -555,6 +561,17 @@ mod test {
         let mut args = test_args();
         let config = process_args(&mut args).unwrap();
         assert_eq!(config.api_url, "http://web:3000");
+    }
+
+    #[test]
+    fn defaults_to_hosted_api() {
+        for command in [None, Some("dev"), Some("login")] {
+            let mut argv = vec!["kittengrid-agent", "--no-global-config", "--no-auth-file"];
+            argv.extend(command);
+            let mut args = Args::parse_from(argv);
+            let config = process_args(&mut args).unwrap();
+            assert_eq!(config.api_url, DEFAULT_API_URL);
+        }
     }
 
     #[test]
